@@ -13,6 +13,7 @@ from boto.s3.connection import S3Connection
 from . import DataSource, script
 from .. import CONFIG
 from ..logger import Logger
+from ..utils import download_progress
 
 
 class OsmLoader(DataSource):

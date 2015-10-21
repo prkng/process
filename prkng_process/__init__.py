@@ -1,5 +1,7 @@
 import os
 
+from .logging import set_level
+
 
 __version__ = '1.2'
 
@@ -7,3 +9,5 @@ __version__ = '1.2'
 spath = os.environ["PRKNG_SETTINGS"]
 CONFIG = {}
 execfile(spath, {}, CONFIG)
+
+set_level(CONFIG["LOG_LEVEL"])

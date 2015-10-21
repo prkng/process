@@ -1,5 +1,6 @@
 import os
 
+from .. import CONFIG
 from ..database import PostgresWrapper
 
 

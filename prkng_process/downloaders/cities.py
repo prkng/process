@@ -293,7 +293,7 @@ class NewYork(DataSource):
         self.url_signs = "http://a841-dotweb01.nyc.gov/datafeeds/ParkingReg/Parking_Regulation_Shapefile.zip"
         self.url_roads = "https://data.cityofnewyork.us/api/geospatial/exjm-f27b?method=export&format=Shapefile"
         self.url_snd = "http://www.nyc.gov/html/dcp/download/bytes/snd15c.zip"
-        self.url_loc = "https://data.cityofnewyork.us/download/jpjb-rq49/CSV"
+        self.url_loc = "http://a841-dotweb01.nyc.gov/datafeeds/ParkingReg/signs.CSV"
 
     def download(self):
         self.download_signs()
