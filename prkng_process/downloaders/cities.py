@@ -63,14 +63,14 @@ class Montreal(DataSource):
                 url = res['url']
 
         Logger.info("Downloading Montreal Géobase")
-        zipfile = download_progress(
+        zfile = download_progress(
             url.replace('ckanprod', 'donnees.ville.montreal.qc.ca'),
             os.path.basename(url),
             CONFIG['DOWNLOAD_DIRECTORY']
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.road_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
@@ -90,15 +90,15 @@ class Montreal(DataSource):
 
         for area, url in subs.iteritems():
             Logger.info("Downloading Montreal - {} ".format(area))
-            zipfile = download_progress(
+            zfile = download_progress(
                 url.replace('ckanprod', 'donnees.ville.montreal.qc.ca'),
                 os.path.basename(url),
                 CONFIG['DOWNLOAD_DIRECTORY']
             )
 
             Logger.info("Unzipping")
-            with zipfile.ZipFile(zipfile) as zip:
-                if 'description' not in zipfile:
+            with zipfile.ZipFile(zfile) as zip:
+                if 'description' not in zfile:
                     self.jsonfiles.append(os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                         name for name in zip.namelist()
                         if name.lower().endswith('.json')
@@ -200,14 +200,14 @@ class Quebec(DataSource):
         Download and unzip file
         """
         Logger.info("Downloading {} parking data".format(self.name))
-        zipfile = download_progress(
+        zfile = download_progress(
             self.url,
             "quebec_latest.zip",
             CONFIG['DOWNLOAD_DIRECTORY']
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.filename = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
@@ -215,14 +215,14 @@ class Quebec(DataSource):
             zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
 
         Logger.info("Downloading {} paid parking data".format(self.name))
-        zipfile = download_progress(
+        zfile = download_progress(
             self.url_payant,
             "quebec_paid_latest.zip",
             CONFIG['DOWNLOAD_DIRECTORY']
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.filename_payant = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
@@ -306,7 +306,7 @@ class NewYork(DataSource):
         Download NYC Street Centerline (CSCL) shapefile
         """
         Logger.info("Downloading New York Centerlines")
-        zipfile = download_progress(
+        zfile = download_progress(
             self.url_roads,
             "nyc_cscl.zip",
             CONFIG['DOWNLOAD_DIRECTORY'],
@@ -314,7 +314,7 @@ class NewYork(DataSource):
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.road_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
@@ -326,14 +326,14 @@ class NewYork(DataSource):
         Download signs
         """
         Logger.info("Downloading New York sign data")
-        zipfile = download_progress(
+        zfile = download_progress(
             self.url_signs,
             os.path.basename(self.url_signs),
             CONFIG['DOWNLOAD_DIRECTORY']
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.sign_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
@@ -345,14 +345,14 @@ class NewYork(DataSource):
         Download Street Name Dictionary
         """
         Logger.info("Downloading New York Street Name Dictionary")
-        zipfile = download_progress(
+        zfile = download_progress(
             self.url_snd,
             "nyc_snd.zip",
             CONFIG['DOWNLOAD_DIRECTORY']
         )
 
         Logger.info("Unzipping")
-        with zipfile.ZipFile(zipfile) as zip:
+        with zipfile.ZipFile(zfile) as zip:
             self.snd_file = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.txt')

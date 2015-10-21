@@ -3,9 +3,9 @@ from __future__ import print_function
 
 from . import CONFIG
 from .logger import Logger
-from .tasks import init_tasks, run_backup
 
 import click
+import datetime
 import os
 import subprocess
 
@@ -49,7 +49,7 @@ def update(city):
     zl.update()
     for source in CitySources():
         obj = source()
-        if obj.city != city:
+        if city != 'all' and obj.city != city:
             continue
         obj.download()
         obj.load()
@@ -82,25 +82,6 @@ def process(city, osm):
     """
     from . import pipeline
     pipeline.run(city.split(","), osm)
-
-
-@click.command(name="update-areas")
-def export():
-    """
-    Create a new version of service area statics and upload to S3
-    """
-    from .downloaders.zones import ServiceAreasLoader
-    sal = ServiceAreasLoader()
-    sal.process_areas()
-
-
-@click.command(name="init-tasks")
-def initialize_tasks():
-    """
-    Tell rq-scheduler to process our tasks
-    """
-    init_tasks(CONFIG["DEBUG"])
-    Logger.info('Tasks initialized')
 
 
 main.add_command(export)

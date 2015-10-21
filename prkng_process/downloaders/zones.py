@@ -2,6 +2,7 @@ from __future__ import print_function, unicode_literals
 
 import geojson
 import gzip
+import os
 import StringIO
 import subprocess
 import zipfile
@@ -9,7 +10,7 @@ import zipfile
 from boto.s3.key import Key
 from boto.s3.connection import S3Connection
 
-from . import script
+from . import DataSource, script
 from .. import CONFIG
 from ..logger import Logger
 

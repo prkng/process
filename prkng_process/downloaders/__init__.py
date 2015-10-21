@@ -1,6 +1,6 @@
 import os
 
-from .database import PostgresWrapper
+from ..database import PostgresWrapper
 
 
 class DataSource(object):
@@ -15,4 +15,4 @@ class DataSource(object):
 
 def script(src):
     """returns the location of sql scripts"""
-    return os.path.join(os.path.dirname(__file__), 'data', src)
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', src)
