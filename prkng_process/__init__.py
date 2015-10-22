@@ -1,6 +1,6 @@
 import os
 
-from .logging import set_level
+from prkng_process.logger import set_level
 
 
 __version__ = '1.2'

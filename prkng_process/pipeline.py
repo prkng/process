@@ -104,6 +104,7 @@ def process_quebec():
     db.query(qbc.create_paid_slots_standalone)
 
     if CONFIG['DEBUG']:
+        info("Creating debug slots")
         db.query(qbc.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('quebec_slots_debug', 'pkid')
         db.create_index('quebec_slots_debug', 'geom', index_type='gist')
@@ -199,6 +200,7 @@ def process_montreal():
     db.vacuum_analyze('public', 'montreal_slots_temp')
 
     if CONFIG['DEBUG']:
+        info("Creating debug slots")
         db.query(mrl.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('montreal_slots_debug', 'pkid')
         db.create_index('montreal_slots_debug', 'geom', index_type='gist')
@@ -306,6 +308,7 @@ def process_newyork():
     db.vacuum_analyze('public', 'newyork_slots_temp')
 
     if CONFIG['DEBUG']:
+        info("Creating debug slots")
         db.query(nyc.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('newyork_slots_debug', 'pkid')
         db.create_index('newyork_slots_debug', 'geom', index_type='gist')
@@ -466,7 +469,7 @@ def insert_raw_lots(city, filename):
             capacity, street_view_lat, street_view_long, street_view_head, street_view_id, active)
         FROM '{}'
         WITH CSV HEADER
-    """.format(city, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', filename)))
+    """.format(city, os.path.join(os.path.dirname(__file__), 'data', filename)))
 
 
 def insert_parking_lots(city):

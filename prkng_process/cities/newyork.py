@@ -403,7 +403,7 @@ SELECT
             'metered', COALESCE(r.metered, false),
             'restrict_typ', r.restrict_typ,
             'paid_hourly_rate',
-                (CASE WHEN r.permit_no = 'commercial' AND r.metered = true AND min(t.boro) = 'M' THEN 4.0
+                (CASE WHEN r.permit_no = 'commercial' AND r.metered = true AND t.boro = 'M' THEN 4.0
                  ELSE z.hourly_rat END),
             'permit_no', (CASE WHEN r.permit_no = '' THEN NULL ELSE r.permit_no END)
         )::jsonb
