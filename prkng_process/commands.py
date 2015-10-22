@@ -23,7 +23,7 @@ def export():
     tables = ["montreal_slots", "quebec_slots", "newyork_slots", "cities", "city_assets", "parking_lots", "rules"]
 
     Logger.info('Exporting processed tables...')
-    export_dir = os.path.join(os.path.basedir(os.environ["PRKNG_SETTINGS"]), 'export')
+    export_dir = os.path.join(os.path.dirname(os.environ["PRKNG_SETTINGS"]), 'export')
     file_name = 'prkng-data-{}.sql.gz'.format(datetime.datetime.now().strftime('%Y%m%d-%H%M'))
     if not os.path.exists(export_dir):
         os.mkdir(export_dir)
