@@ -29,7 +29,7 @@ def export():
         os.mkdir(export_dir)
     subprocess.check_call('pg_dump -c {tbls} -U {PG_USERNAME} {PG_DATABASE} | gzip > {path}'.format(
         path=os.path.join(export_dir, file_name), PG_USERNAME=CONFIG["PG_USERNAME"], PG_DATABASE=CONFIG["PG_DATABASE"],
-        tbls="-t '' ".join(tables)),
+        tbls=" ".join(["-t '{}'".format(x) for x in tables])),
         shell=True)
     Logger.info('Table export created and stored as {}'.format(os.path.join(export_dir, file_name)))
 
