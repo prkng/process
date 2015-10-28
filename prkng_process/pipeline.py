@@ -22,7 +22,7 @@ db = PostgresWrapper(
     "user={PG_USERNAME} password={PG_PASSWORD} ".format(**CONFIG))
 
 
-def process_quebec():
+def process_quebec(debug=False):
     """
     Process Quebec data
     """
@@ -103,7 +103,7 @@ def process_quebec():
     db.query(qbc.overlay_paid_rules)
     db.query(qbc.create_paid_slots_standalone)
 
-    if CONFIG['DEBUG']:
+    if debug:
         info("Creating debug slots")
         db.query(qbc.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('quebec_slots_debug', 'pkid')
@@ -111,7 +111,7 @@ def process_quebec():
         db.vacuum_analyze('public', 'quebec_slots_debug')
 
 
-def process_montreal():
+def process_montreal(debug=False):
     """
     process montreal data and generate parking slots
     """
@@ -199,7 +199,7 @@ def process_montreal():
     db.query(mrl.overlay_paid_rules)
     db.vacuum_analyze('public', 'montreal_slots_temp')
 
-    if CONFIG['DEBUG']:
+    if debug:
         info("Creating debug slots")
         db.query(mrl.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('montreal_slots_debug', 'pkid')
@@ -207,7 +207,7 @@ def process_montreal():
         db.vacuum_analyze('public', 'montreal_slots_debug')
 
 
-def process_newyork():
+def process_newyork(debug=False):
     """
     Process New York data
     """
@@ -307,7 +307,7 @@ def process_newyork():
     db.create_index('newyork_slots_temp', 'rules', index_type='gin')
     db.vacuum_analyze('public', 'newyork_slots_temp')
 
-    if CONFIG['DEBUG']:
+    if debug:
         info("Creating debug slots")
         db.query(nyc.create_slots_for_debug.format(offset=LINE_OFFSET))
         db.create_index('newyork_slots_debug', 'pkid')
@@ -370,7 +370,7 @@ def process_osm():
     db.vacuum_analyze('public', 'roads')
 
 
-def run(cities=CITIES, osm=False):
+def run(cities=CITIES, osm=False, debug=False):
     """
     Run the entire pipeline
     """
@@ -392,7 +392,6 @@ def run(cities=CITIES, osm=False):
     for x in cities:
         db.query(common.create_slots_temp.format(city=x))
         db.query(common.create_slots_partition.format(city=x))
-        db.query(common.create_corrections.format(city=x))
 
     Logger.info("Processing parking lot / garage data")
     db.query(common.create_parking_lots)
@@ -408,11 +407,11 @@ def run(cities=CITIES, osm=False):
     db.create_index('parking_lots', 'agenda', index_type='gin')
 
     if 'montreal' in cities:
-        process_montreal()
+        process_montreal(debug)
     if 'quebec' in cities:
-        process_quebec()
+        process_quebec(debug)
     if 'newyork' in cities:
-        process_newyork()
+        process_newyork(debug)
 
     Logger.info("Shorten slots that intersect with roads or other slots")
     for x in cities:
@@ -428,12 +427,7 @@ def run(cities=CITIES, osm=False):
         db.query(common.create_client_data.format(city=x))
         db.vacuum_analyze('public', x+'_slots')
 
-    Logger.info("Mapping corrections to new slots")
-    db.query(common.process_corrected_rules)
-    for x in cities:
-        db.query(common.process_corrections.format(city=x))
-
-    if not CONFIG['DEBUG']:
+    if not debug:
         cleanup_table()
 
 

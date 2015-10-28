@@ -2,9 +2,12 @@
 from __future__ import print_function, unicode_literals
 
 import csv
+import geojson
+import math
 import os
 import requests
 import subprocess
+import sys
 import zipfile
 
 from . import DataSource, script
@@ -455,6 +458,130 @@ class NewYork(DataSource):
             """WITH tmp AS (
                 SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
                 FROM newyork_signs_raw
+            ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
+            """)[0]
+        return res
+
+
+class Seattle(DataSource):
+    """
+    Download data from Seattle city
+    """
+    def __init__(self):
+        super(Seattle, self).__init__()
+        self.name = 'Seattle'
+        self.city = 'seattle'
+        # ArcGIS REST API
+        self.url_signs = "http://gisrevprxy.seattle.gov/arcgis/rest/services/SDOT_EXT/DSG_datasharing/MapServer/2/query"
+        self.url_roads = "https://data.seattle.gov/download/afip-2mzr/application/zip"
+
+    def download(self):
+        self.download_signs()
+        self.download_roads()
+
+    def download_signs(self):
+        features = []
+        for x in ["R7", "R8"]:
+            Logger.info("Downloading Seattle sign data ({})".format(x))
+            count = requests.get(self.url_signs, params={"f": "json", "where": "SIGNTYPE LIKE '%{}-%'".format(x),
+                "returnCountOnly": True})
+            count = count.json()["count"]
+            count = int(math.ceil(float(count) / 1000.0))
+
+            print("[", end='')
+            num = 0
+            print_every_iter = int(count) / 50
+            next_print = 0
+            while num < count:
+                data = requests.get(self.url_signs, params={"f": "json", "where": "SIGNTYPE LIKE '%{}-%'".format(x),
+                    "outFields": "*", "returnGeometry": True, "resultRecordCount": 1000, "resultOffset": (num * 1000)})
+                data = data.json()["features"]
+                num += 1
+                features += data
+                if num >= next_print:
+                    sys.stdout.write("=")
+                    sys.stdout.flush()
+                    next_print += print_every_iter
+            print("] Download complete...")
+
+
+        Logger.info("Writing...")
+        processed_features = []
+        invalid_signs = 0
+        for x in features:
+            if 'NaN' in [x["geometry"]["x"], x["geometry"]["y"]]:
+                invalid_signs += 1
+                continue
+            feat = geojson.Feature(id=x["attributes"]["COMPKEY"], properties=x["attributes"],
+                    geometry=geojson.Point((x["geometry"]["x"], x["geometry"]["y"])))
+            processed_features.append(feat)
+        processed_features = geojson.FeatureCollection(processed_features)
+
+        if invalid_signs:
+            Logger.info("{} signs with invalid geometries, discarding".format(invalid_signs))
+        with open("/tmp/seattle_signs.geojson", "w") as f:
+            geojson.dump(processed_features, f)
+
+    def download_roads(self):
+        Logger.info("Downloading Seattle roads data")
+        zfile = download_progress(
+            self.url_roads,
+            os.path.basename(self.url_roads),
+            CONFIG['DOWNLOAD_DIRECTORY']
+        )
+
+        Logger.info("Unzipping")
+        with zipfile.ZipFile(zfile) as zip:
+            self.road_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
+                name for name in zip.namelist()
+                if name.startswith('StatePlane/') and name.lower().endswith('.shp')
+            ][0])
+            zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
+
+    def load(self):
+        """
+        Loads data into database
+        """
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt point -s_srs EPSG:2926 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln seattle_signs_raw {}'.format("/tmp/seattle_signs.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "seattle_signs_raw")
+
+        subprocess.check_call(
+            'shp2pgsql -d -g geom -t 2D -s 2926:3857 -W LATIN1 -I {filename} seattle_geobase | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=self.road_shapefile, **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "seattle_geobase")
+
+    def load_rules(self):
+        """
+        load parking rules translation
+        """
+        Logger.info("Loading parking rules for {}".format(self.name))
+
+        filename = script("rules_seattle.csv")
+
+        Logger.debug("loading file '%s' with script '%s'" %
+                     (filename, script('seattle_load_rules.sql')))
+
+        with open(script('seattle_load_rules.sql'), 'rb') as infile:
+            self.db.query(infile.read().format(filename))
+            self.db.vacuum_analyze("public", "seattle_rules_translation")
+
+    def get_extent(self):
+        """
+        get extent in the format latmin, longmin, latmax, longmax
+        """
+        res = self.db.query(
+            """WITH tmp AS (
+                SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
+                FROM seattle_signs_raw
             ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
             """)[0]
         return res

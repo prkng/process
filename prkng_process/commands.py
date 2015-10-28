@@ -76,12 +76,14 @@ def update_areas():
     help='A specific city (or comma-separated list of cities) to process data for')
 @click.option('--osm', default=True,
     help='Reprocess OSM roads/map data')
-def process(city, osm):
+@click.option('--debug', default=False,
+    help='Create debug slot tables and keep temp tables')
+def process(city, osm, debug):
     """
     Process data and create the target tables
     """
     from . import pipeline
-    pipeline.run(city.split(","), osm)
+    pipeline.run(city.split(","), osm, debug)
 
 
 main.add_command(export)
