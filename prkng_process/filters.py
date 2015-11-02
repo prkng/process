@@ -10,7 +10,7 @@ def group_rules(rules):
     """
     singles = namedtuple('singles', (
         'code', 'description', 'season_start', 'season_end',
-        'time_max_parking', 'agenda', 'special_days', 'metered', 'restrict_typ', 'permit_no'
+        'time_max_parking', 'agenda', 'special_days', 'restrict_types', 'permit_no'
     ))
 
     results = []
@@ -56,8 +56,7 @@ def group_rules(rules):
             part.time_max_parking,
             dict(day_dict),
             part.special_days,
-            part.metered == 1,
-            part.restrict_typ,
+            part.restrict_types,
             part.permit_no
         ))
 

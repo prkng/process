@@ -17,7 +17,7 @@ from ..utils import download_progress
 
 
 def CitySources():
-    return [Montreal, Quebec, NewYork]
+    return [Montreal, Quebec, NewYork, Seattle]
 
 
 class Montreal(DataSource):

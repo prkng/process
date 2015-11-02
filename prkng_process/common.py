@@ -10,8 +10,7 @@ rules_columns = (
     'time_max_parking',
     'agenda',
     'special_days',
-    'metered',
-    'restrict_typ',
+    'restrict_types',
     'permit_no'
 )
 
@@ -26,8 +25,7 @@ CREATE TABLE rules (
     , time_max_parking float DEFAULT 0.0
     , agenda jsonb
     , special_days varchar DEFAULT ''
-    , metered boolean
-    , restrict_typ varchar DEFAULT ''
+    , restrict_types varchar[] DEFAULT []
     , permit_no varchar
 )
 """
@@ -51,8 +49,7 @@ SELECT
     , dim
     , daily
     , special_days
-    , metered
-    , restrict_typ
+    , restrict_types
     , permit_no
 FROM {source}
 """

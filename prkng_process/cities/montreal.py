@@ -339,8 +339,7 @@ SELECT
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
-            'metered', false,
-            'restrict_typ', r.restrict_typ,
+            'restrict_types', r.restrict_types,
             'permit_no', z.number
         )::jsonb
     ))::jsonb as rules
@@ -352,7 +351,7 @@ SELECT
       END as geom
 FROM tmp t
 JOIN rules r ON t.code = r.code
-LEFT JOIN permit_zones z ON r.restrict_typ = 'permit' AND ST_Intersects(t.geom, z.geom)
+LEFT JOIN permit_zones z ON 'permit' = ANY(r.restrict_types) AND ST_Intersects(t.geom, z.geom)
 GROUP BY t.id
 ) INSERT INTO montreal_slots_temp (rid, position, signposts, rules, geom, way_name)
 SELECT
@@ -396,8 +395,7 @@ WITH tmp AS (
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
-            'metered', true,
-            'restrict_typ', r.restrict_typ,
+            'restrict_types', r.restrict_types,
             'paid_hourly_rate', t.rate
         )::jsonb)
     ))::jsonb AS rules
@@ -471,7 +469,7 @@ SELECT
     , rt.dim
     , rt.daily
     , rt.special_days
-    , rt.restrict_typ
+    , rt.restrict_types
     , r.agenda::text as agenda
     , CASE
         WHEN isleft = 1 then

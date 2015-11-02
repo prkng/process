@@ -400,10 +400,9 @@ SELECT
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
-            'metered', COALESCE(r.metered, false),
-            'restrict_typ', r.restrict_typ,
+            'restrict_types', r.restrict_types,
             'paid_hourly_rate',
-                (CASE WHEN r.permit_no = 'commercial' AND r.metered = true AND t.boro = 'M' THEN 4.0
+                (CASE WHEN r.permit_no = 'commercial' AND 'paid' = ANY(r.restrict_types) AND t.boro = 'M' THEN 4.0
                  ELSE z.hourly_rat END),
             'permit_no', (CASE WHEN r.permit_no = '' THEN NULL ELSE r.permit_no END)
         )::jsonb
@@ -416,7 +415,7 @@ SELECT
       END as geom
 FROM tmp t
 JOIN rules r ON t.code = r.code
-LEFT JOIN metered_rate_zones z ON r.metered = true AND z.city = 'newyork' AND ST_Intersects(t.geom, z.geom)
+LEFT JOIN metered_rate_zones z ON 'paid' = ANY(r.restrict_types) AND z.city = 'newyork' AND ST_Intersects(t.geom, z.geom)
 GROUP BY t.id
 ) INSERT INTO newyork_slots_temp (rid, position, signposts, rules, geom, way_name)
 SELECT
@@ -489,8 +488,7 @@ SELECT
     , rt.dim
     , rt.daily
     , rt.special_days
-    , rt.metered
-    , rt.restrict_typ
+    , rt.restrict_types
     , rt.permit_no
     , r.agenda::text as agenda
     , CASE

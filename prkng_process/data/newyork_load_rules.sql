@@ -18,13 +18,12 @@ CREATE TABLE newyork_rules_translation (
     dim smallint,
     daily float,
     special_days varchar DEFAULT '',
-    metered smallint,
-    restrict_typ varchar DEFAULT '',
+    restrict_types varchar[],
     permit_no varchar DEFAULT ''
 );
 
 copy newyork_rules_translation (code,description,season_start,season_end,
     time_max_parking,time_start,time_end,time_duration,lun,mar,mer,jeu,ven,
-    sam,dim,daily,special_days,metered,restrict_typ,permit_no)
+    sam,dim,daily,special_days,restrict_types,permit_no)
 from '{}'
 WITH CSV HEADER DELIMITER ',' ENCODING 'UTF-8';
