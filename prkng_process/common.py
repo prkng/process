@@ -25,7 +25,7 @@ CREATE TABLE rules (
     , time_max_parking float DEFAULT 0.0
     , agenda jsonb
     , special_days varchar DEFAULT ''
-    , restrict_types varchar[] DEFAULT []
+    , restrict_types varchar[]
     , permit_no varchar
 )
 """
