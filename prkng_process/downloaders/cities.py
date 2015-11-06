@@ -62,7 +62,7 @@ class Montreal(DataSource):
         url = ''
 
         for res in json['result']['resources']:
-            if res['name'].lower() == 'géobase' and res['format'] == 'ZIP':
+            if res['name'].lower() == 'géobase' and res['format'] == 'shp':
                 url = res['url']
 
         Logger.info("Downloading Montreal Géobase")

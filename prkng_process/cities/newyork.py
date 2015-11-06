@@ -204,7 +204,6 @@ CREATE TABLE newyork_signpost_onroad AS
         , ST_isLeft(s.geom, sp.geom) AS isleft
     FROM newyork_signpost sp
     JOIN newyork_roads_geobase s ON sp.geobase_id = s.id
-    WHERE sp.boro = 'K' OR sp.boro = 'M' -- FIXME
     ORDER BY sp.id, ST_Distance(s.geom, sp.geom);
 
 SELECT id FROM newyork_signpost_onroad GROUP BY id HAVING count(*) > 1
