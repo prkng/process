@@ -56,7 +56,7 @@ def group_rules(rules):
             part.time_max_parking,
             dict(day_dict),
             part.special_days,
-            part.restrict_types.split(",") if part.restrict_types else [],
+            ("{"+part.restrict_types+"}") if part.restrict_types else "{}",
             part.permit_no
         ))
 
