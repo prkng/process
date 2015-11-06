@@ -365,6 +365,7 @@ WITH tmp AS (
                           s.signpost = np.id AND
                           s.direction = np.direction
     JOIN newyork_roads_geobase rb ON spo.road_id = rb.id
+    WHERE rb.boro = '{boro}'
 
     UNION ALL
     -- both direction from signpost
@@ -380,6 +381,7 @@ WITH tmp AS (
     JOIN newyork_sign s ON ARRAY[s.signpost] <@ sl.signposts AND direction = 0
     JOIN newyork_signpost_onroad spo ON s.signpost = spo.id
     JOIN newyork_roads_geobase rb ON spo.road_id = rb.id
+    WHERE rb.boro = '{boro}'
 ), selection AS (
 SELECT
     distinct on (t.id) t.id
@@ -448,6 +450,7 @@ CREATE TABLE newyork_slots_debug as
                           s.signpost = np.id AND
                           s.direction = np.direction
     JOIN newyork_roads_geobase rb on spo.road_id = rb.id
+    WHERE rb.boro = '{boro}'
 
     UNION ALL
     -- both direction from signpost
@@ -462,6 +465,7 @@ CREATE TABLE newyork_slots_debug as
     JOIN newyork_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN newyork_signpost_onroad spo on s.signpost = spo.id
     JOIN newyork_roads_geobase rb on spo.road_id = rb.id
+    WHERE rb.boro = '{boro}'
 )
 SELECT
     distinct on (t.id, t.code)

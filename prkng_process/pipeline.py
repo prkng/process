@@ -246,6 +246,7 @@ def process_newyork(debug=False):
     db.create_index('newyork_roads_geobase', 'id')
     db.create_index('newyork_roads_geobase', 'osm_id')
     db.create_index('newyork_roads_geobase', 'name')
+    db.create_index('newyork_roads_geobase', 'boro')
     db.create_index('newyork_roads_geobase', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'newyork_roads_geobase')
 
@@ -271,7 +272,7 @@ def process_newyork(debug=False):
         db.query(nyc.generate_signposts_orphans)
         info("Table 'newyork_signpost_orphans' has been generated to check for orphans")
 
-    info("Creating slots between signposts")
+    info("Creating likely slots")
     db.query(nyc.create_slots_likely)
     db.query(nyc.insert_slots_likely.format(isleft=1))
     db.query(nyc.insert_slots_likely.format(isleft=-1))
@@ -295,24 +296,28 @@ def process_newyork(debug=False):
     db.create_index('newyork_slots_likely', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'newyork_slots_likely')
 
+    info("Creating nextpoints")
     db.query(nyc.create_nextpoints_for_signposts)
     db.create_index('newyork_nextpoints', 'id')
     db.create_index('newyork_nextpoints', 'slot_id')
     db.create_index('newyork_nextpoints', 'direction')
     db.vacuum_analyze('public', 'newyork_nextpoints')
 
-    db.query(nyc.insert_slots_temp.format(offset=LINE_OFFSET))
-    db.create_index('newyork_slots_temp', 'id')
-    db.create_index('newyork_slots_temp', 'geom', index_type='gist')
-    db.create_index('newyork_slots_temp', 'rules', index_type='gin')
-    db.vacuum_analyze('public', 'newyork_slots_temp')
+    for x in ['K', 'M', 'Q', 'B', 'S']:
+        info("Creating slots between signposts (borough {})".format(x))
+        db.query(nyc.insert_slots_temp.format(boro=x, offset=LINE_OFFSET))
+        db.create_index('newyork_slots_temp', 'id')
+        db.create_index('newyork_slots_temp', 'geom', index_type='gist')
+        db.create_index('newyork_slots_temp', 'rules', index_type='gin')
+        db.vacuum_analyze('public', 'newyork_slots_temp')
 
     if debug:
         info("Creating debug slots")
-        db.query(nyc.create_slots_for_debug.format(offset=LINE_OFFSET))
-        db.create_index('newyork_slots_debug', 'pkid')
-        db.create_index('newyork_slots_debug', 'geom', index_type='gist')
-        db.vacuum_analyze('public', 'newyork_slots_debug')
+        for x in ['K', 'M', 'Q', 'B', 'S']:
+            db.query(nyc.create_slots_for_debug.format(boro=x, offset=LINE_OFFSET))
+            db.create_index('newyork_slots_debug', 'pkid')
+            db.create_index('newyork_slots_debug', 'geom', index_type='gist')
+            db.vacuum_analyze('public', 'newyork_slots_debug')
 
 
 def cleanup_table():
