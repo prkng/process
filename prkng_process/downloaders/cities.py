@@ -552,12 +552,29 @@ class Seattle(DataSource):
         self.db.vacuum_analyze("public", "seattle_signs_raw")
 
         subprocess.check_call(
-            'shp2pgsql -d -g geom -t 2D -s 2926:3857 -W LATIN1 -I {filename} seattle_geobase | '
+            'shp2pgsql -d -g geom -t 2D -s 2926:3857 -S -W LATIN1 -I {filename} seattle_geobase | '
             'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
             .format(filename=self.road_shapefile, **CONFIG),
             shell=True
         )
         self.db.vacuum_analyze("public", "seattle_geobase")
+
+        with open(script('rules_seattle_glue.csv'), "rb") as f:
+            csv.field_size_limit(999999)
+            csvreader = csv.reader(f)
+            next(csvreader, None)
+            rg_lines = ["('{}', '{{{}}}'::varchar[])".format(x[0], x[1]) for x in csvreader]
+            self.db.query("""
+                DROP TABLE IF EXISTS seattle_sign_codes;
+                CREATE TABLE seattle_sign_codes (
+                    id SERIAL PRIMARY KEY,
+                    code varchar,
+                    signs varchar[]
+                );
+
+                INSERT INTO seattle_sign_codes (code, signs)
+                    SELECT * FROM (VALUES {}) AS d(code, signs);
+            """.format(",".join(rg_lines)))
 
     def load_rules(self):
         """
