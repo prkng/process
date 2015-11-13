@@ -21,6 +21,7 @@ WHERE
     AND landuse is NULL -- avoid industrial areas
     AND tunnel is NULL
     AND (highway not in ('cycleway') or highway is NULL)
+    AND service != 'parking_aisle'
     AND st_issimple(way)
     AND power is NULL -- remove hydro quebec lines for example
 UNION ALL
@@ -38,6 +39,7 @@ WHERE
     AND boundary is NULL
     AND tunnel is NULL
     AND (highway not in ('cycleway') or highway is NULL)
+    AND service != 'parking_aisle'
     AND NOT st_issimple(way)
     AND power is NULL
 """
