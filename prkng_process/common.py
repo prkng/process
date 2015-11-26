@@ -145,7 +145,9 @@ CREATE TABLE {city}_parking_lots (
   street_view_long float,
   street_view_head float,
   street_view_id varchar,
-  active boolean
+  active boolean,
+  partner_name varchar,
+  partner_id varchar
 )
 """
 

@@ -9,6 +9,7 @@ from . import CONFIG, common, osm, plfunctions
 from .cities import montreal as mrl
 from .cities import quebec as qbc
 from .cities import newyork as nyc
+from .cities import seattle as sea
 from .database import PostgresWrapper
 from .filters import group_rules
 from .logger import Logger
@@ -320,6 +321,99 @@ def process_newyork(debug=False):
             db.vacuum_analyze('public', 'newyork_slots_debug')
 
 
+def process_seattle(debug=False):
+    """
+    Process Seattle data
+    """
+    def info(msg):
+        return Logger.info("Seattle: {}".format(msg))
+
+    def debug(msg):
+        return Logger.debug("Seattle: {}".format(msg))
+
+    def warning(msg):
+        return Logger.warning("Seattle: {}".format(msg))
+
+    info('Loading and translating rules')
+    insert_rules('seattle_rules_translation')
+    db.vacuum_analyze('public', 'rules')
+
+    info("Loading signs")
+    db.query(sea.create_sign)
+    db.query(sea.insert_sign)
+    db.query(sea.insert_virtual_signs)
+    db.create_index('seattle_sign', 'direction')
+    db.create_index('seattle_sign', 'code')
+    db.create_index('seattle_sign', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'seattle_sign')
+
+    info("Creating signposts")
+    db.query(sea.create_signpost)
+    db.query(sea.insert_signpost)
+    db.create_index('seattle_signpost', 'id')
+    db.create_index('seattle_signpost', 'geobase_id')
+    db.create_index('seattle_signpost', 'signs', index_type='gin')
+    db.create_index('seattle_signpost', 'geom', index_type='gist')
+    db.query(sea.add_signposts_to_sign)
+    db.vacuum_analyze('public', 'seattle_signpost')
+
+    info("Matching osm roads with geobase")
+    db.query(sea.match_roads_geobase)
+    db.create_index('seattle_roads_geobase', 'id')
+    db.create_index('seattle_roads_geobase', 'osm_id')
+    db.create_index('seattle_roads_geobase', 'name')
+    db.create_index('seattle_roads_geobase', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'seattle_roads_geobase')
+
+    info("Projecting signposts on road")
+    duplicates = db.query(sea.project_signposts)
+    if duplicates:
+        warning("Duplicates found for projected signposts : {}"
+                .format(str(duplicates)))
+
+    percent, total = db.query(sea.count_signpost_projected)[0]
+
+    if percent < 100:
+        warning("Only {:.0f}% of signposts have been bound to a road. Total is {}"
+                .format(percent, total))
+        db.query(sea.generate_signposts_orphans)
+        info("Table 'seattle_signpost_orphans' has been generated to check for orphans")
+
+    db.query(sea.assign_directions)
+    db.vacuum_analyze('public', 'seattle_sign')
+
+    info("Creating likely slots")
+    db.query(sea.create_slots_likely)
+    db.query(sea.insert_slots_likely.format(isleft=1))
+    db.query(sea.insert_slots_likely.format(isleft=-1))
+
+    db.create_index('seattle_slots_likely', 'id')
+    db.create_index('seattle_slots_likely', 'signposts', index_type='gin')
+    db.create_index('seattle_slots_likely', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'seattle_slots_likely')
+
+    info("Creating nextpoints")
+    db.query(sea.create_nextpoints_for_signposts)
+    db.create_index('seattle_nextpoints', 'id')
+    db.create_index('seattle_nextpoints', 'slot_id')
+    db.create_index('seattle_nextpoints', 'direction')
+    db.vacuum_analyze('public', 'seattle_nextpoints')
+
+    info("Creating slots between signposts")
+    db.query(sea.insert_slots_temp.format(offset=LINE_OFFSET))
+    db.create_index('seattle_slots_temp', 'id')
+    db.create_index('seattle_slots_temp', 'geom', index_type='gist')
+    db.create_index('seattle_slots_temp', 'rules', index_type='gin')
+    db.vacuum_analyze('public', 'seattle_slots_temp')
+
+    if debug:
+        info("Creating debug slots")
+        db.query(sea.create_slots_for_debug.format(offset=LINE_OFFSET))
+        db.create_index('seattle_slots_debug', 'pkid')
+        db.create_index('seattle_slots_debug', 'geom', index_type='gist')
+        db.vacuum_analyze('public', 'seattle_slots_debug')
+
+
 def cleanup_table():
     """
     Remove temporary tables
@@ -406,6 +500,9 @@ def run(cities=CITIES, osm=False, debug=False):
     db.query(common.create_parking_lots_raw.format(city="quebec"))
     insert_raw_lots("quebec", "lots_quebec.csv")
     insert_parking_lots("quebec")
+    db.query(common.create_parking_lots_raw.format(city="seattle"))
+    insert_raw_lots("quebec", "lots_seattle.csv")
+    insert_parking_lots("seattle")
     db.create_index('parking_lots', 'id')
     db.create_index('parking_lots', 'city')
     db.create_index('parking_lots', 'geom', index_type='gist')
@@ -465,14 +562,16 @@ def insert_raw_lots(city, filename):
             lun_special, mar_special, mer_special, jeu_special, ven_special, sam_special, dim_special,
             hourly_special, daily_special, max_special, lun_free, mar_free, mer_free, jeu_free,
             ven_free, sam_free, dim_free, daily_free, indoor, handicap, card, valet, lat, long,
-            capacity, street_view_lat, street_view_long, street_view_head, street_view_id, active)
+            capacity, street_view_lat, street_view_long, street_view_head, street_view_id, active,
+            partner_name, partner_id)
         FROM '{}'
         WITH CSV HEADER
     """.format(city, os.path.join(os.path.dirname(__file__), 'data', filename)))
 
 
 def insert_parking_lots(city):
-    columns = ["city", "name", "operator", "address", "description", "agenda", "capacity", "attrs", "geom", "active", "street_view", "geojson"]
+    columns = ["city", "name", "operator", "address", "description", "agenda", "capacity", "attrs",
+        "geom", "active", "street_view", "partner_name", "partner_id", "geojson"]
     days = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
     lots, queries = [], []
 
@@ -521,13 +620,15 @@ def insert_parking_lots(city):
 
         lot += [json.dumps(agenda), row.capacity or 0, json.dumps({"indoor": row.indoor,
             "handicap": row.handicap, "card": row.card, "valet": row.valet}), row.geom, row.active,
-            row.street_view_head, row.street_view_id]
+            row.street_view_head, row.street_view_id,
+            "'{}'".format(row.partner_name) if row.partner_name else "NULL",
+            "'{}'".format(row.partner_id) if row.partner_id else "NULL"]
         lots.append(lot)
 
     for x in lots:
         queries.append("""
             INSERT INTO parking_lots ({}) VALUES ('{city}', '{}', '{}', '{}', '{}', '{}'::jsonb, {},
                 '{}'::jsonb, '{}'::geometry, '{}', json_build_object('head', {}, 'id', '{}')::jsonb,
-                ST_AsGeoJSON(ST_Transform('{geom}'::geometry, 4326))::jsonb)
+                {}, {}, ST_AsGeoJSON(ST_Transform('{geom}'::geometry, 4326))::jsonb)
         """.format(",".join(columns), *[y for y in x], city=city, geom=x[-4]))
     db.queries(queries)
