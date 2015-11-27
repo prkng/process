@@ -17,7 +17,7 @@ from .logger import Logger
 
 # distance from road to slot
 LINE_OFFSET = 6
-CITIES = ["montreal", "quebec", "newyork"]
+CITIES = ["montreal", "quebec", "newyork", "seattle"]
 db = PostgresWrapper(
     "host='{PG_HOST}' port={PG_PORT} dbname={PG_DATABASE} "
     "user={PG_USERNAME} password={PG_PASSWORD} ".format(**CONFIG))
@@ -630,5 +630,5 @@ def insert_parking_lots(city):
             INSERT INTO parking_lots ({}) VALUES ('{city}', '{}', '{}', '{}', '{}', '{}'::jsonb, {},
                 '{}'::jsonb, '{}'::geometry, '{}', json_build_object('head', {}, 'id', '{}')::jsonb,
                 {}, {}, ST_AsGeoJSON(ST_Transform('{geom}'::geometry, 4326))::jsonb)
-        """.format(",".join(columns), *[y for y in x], city=city, geom=x[-4]))
+        """.format(",".join(columns), *[y for y in x], city=city, geom=x[-6]))
     db.queries(queries)
