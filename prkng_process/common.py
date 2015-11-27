@@ -280,3 +280,27 @@ UPDATE slots SET
             'lat', ST_Y(ST_Transform(ST_Line_Interpolate_Point(geom, 0.5), 4326)))])::jsonb end)
     WHERE city = '{city}'
 """
+
+
+create_permit_lists = """
+DROP TABLE IF EXISTS permits;
+CREATE TABLE permits (
+    id serial primary key,
+    city varchar,
+    permit varchar,
+    residential boolean
+);
+"""
+
+insert_permit_lists = """
+    INSERT INTO permits (city, permit, residential)
+    SELECT DISTINCT
+        '{city}',
+        rules->>'permit_no',
+        NOT (rules->>'permit_no' = ANY(ARRAY['bus','motorcycle','commercial','press','carshare','carpool']))
+    FROM (
+        SELECT jsonb_array_elements(rules) AS rules FROM slots WHERE city = '{city}'
+    ) foo
+    WHERE rules->>'permit_no' != ''
+    ORDER BY 1;
+"""

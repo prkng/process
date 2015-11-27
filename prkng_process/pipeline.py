@@ -529,6 +529,11 @@ def run(cities=CITIES, osm=False, debug=False):
         db.query(common.create_client_data.format(city=x))
         db.vacuum_analyze('public', x+'_slots')
 
+    Logger.info("Creating permit lists")
+    db.query(common.create_permit_lists)
+    for x in cities:
+        db.query(common.insert_permit_lists.format(city=x))
+
     if not debug:
         cleanup_table()
 
@@ -580,25 +585,38 @@ def insert_parking_lots(city):
         FROM {}_parking_lots
     """.format(city), namedtuple=True):
         lot = [(x.decode('utf-8').replace("'", "''") if x else '') for x in [row.name, row.operator, row.address, row.description]]
-        agenda = {}
 
         # Create pricing rules per time period the lot is open
+        agenda = {str(y): [] for y in range(1,8)}
         for x in range(1,8):
-            agenda[str(x)] = []
+            hours = [float(z) for z in y.split(",")]
             if getattr(row, days[x - 1] + "_normal"):
+                if hours != [0.0, 24.0] and hours[0] > hours[1]:
+                    nextday = str(x+1) if (x < 7) else "1"
+                    agenda[nextday].append({"hours": [0.0, hours[1]], "max": row.max_normal or None,
+                        "hourly": row.hourly_normal or None, "daily": row.daily_normal or None})
+                    hours = [hours[0], 24.0]
                 y = getattr(row, days[x - 1] + "_normal")
-                agenda[str(x)].append({"hours": [float(z) for z in y.split(",")],
-                    "hourly": row.hourly_normal or None, "max": row.max_normal or None,
-                    "daily": row.daily_normal or None})
+                agenda[str(x)].append({"hours": hours, "hourly": row.hourly_normal or None,
+                    "max": row.max_normal or None, "daily": row.daily_normal or None})
             if getattr(row, days[x - 1] + "_special"):
+                if hours != [0.0, 24.0] and hours[0] > hours[1]:
+                    nextday = str(x+1) if (x < 7) else "1"
+                    agenda[nextday].append({"hours": [0.0, hours[1]], "max": row.max_special or None, 
+                        "hourly": row.hourly_special or None, "daily": row.daily_special or None})
+                    hours = [hours[0], 24.0]
                 y = getattr(row, days[x - 1] + "_special")
-                agenda[str(x)].append({"hours": [float(z) for z in y.split(",")],
-                    "hourly": row.hourly_normal or None, "max": row.max_normal or None,
-                    "daily": row.daily_normal or None})
+                agenda[str(x)].append({"hours": hours, "hourly": row.hourly_special or None,
+                    "max": row.max_special or None, "daily": row.daily_special or None})
             if getattr(row, days[x - 1] + "_free"):
+                if hours != [0.0, 24.0] and hours[0] > hours[1]:
+                    nextday = str(x+1) if (x < 7) else "1"
+                    agenda[nextday].append({"hours": [0.0, hours[1]], "max": None,
+                        "hourly": 0, "daily": row.daily_free or None})
+                    hours = [hours[0], 24.0]
                 y = getattr(row, days[x - 1] + "_free")
-                agenda[str(x)].append({"hours": [float(z) for z in y.split(",")],
-                    "hourly": 0, "max": None, "daily": row.daily_free or None})
+                agenda[str(x)].append({"hours": hours, "hourly": 0, "max": None,
+                    "daily": row.daily_free or None})
 
         # Create "closed" rules for periods not covered by an open rule
         for x in agenda:
