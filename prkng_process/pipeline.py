@@ -589,32 +589,34 @@ def insert_parking_lots(city):
         # Create pricing rules per time period the lot is open
         agenda = {str(y): [] for y in range(1,8)}
         for x in range(1,8):
-            hours = [float(z) for z in y.split(",")]
             if getattr(row, days[x - 1] + "_normal"):
+                y = getattr(row, days[x - 1] + "_normal")
+                hours = [float(z) for z in y.split(",")]
                 if hours != [0.0, 24.0] and hours[0] > hours[1]:
                     nextday = str(x+1) if (x < 7) else "1"
                     agenda[nextday].append({"hours": [0.0, hours[1]], "max": row.max_normal or None,
                         "hourly": row.hourly_normal or None, "daily": row.daily_normal or None})
                     hours = [hours[0], 24.0]
-                y = getattr(row, days[x - 1] + "_normal")
                 agenda[str(x)].append({"hours": hours, "hourly": row.hourly_normal or None,
                     "max": row.max_normal or None, "daily": row.daily_normal or None})
             if getattr(row, days[x - 1] + "_special"):
+                y = getattr(row, days[x - 1] + "_special")
+                hours = [float(z) for z in y.split(",")]
                 if hours != [0.0, 24.0] and hours[0] > hours[1]:
                     nextday = str(x+1) if (x < 7) else "1"
-                    agenda[nextday].append({"hours": [0.0, hours[1]], "max": row.max_special or None, 
+                    agenda[nextday].append({"hours": [0.0, hours[1]], "max": row.max_special or None,
                         "hourly": row.hourly_special or None, "daily": row.daily_special or None})
                     hours = [hours[0], 24.0]
-                y = getattr(row, days[x - 1] + "_special")
                 agenda[str(x)].append({"hours": hours, "hourly": row.hourly_special or None,
                     "max": row.max_special or None, "daily": row.daily_special or None})
             if getattr(row, days[x - 1] + "_free"):
+                y = getattr(row, days[x - 1] + "_free")
+                hours = [float(z) for z in y.split(",")]
                 if hours != [0.0, 24.0] and hours[0] > hours[1]:
                     nextday = str(x+1) if (x < 7) else "1"
                     agenda[nextday].append({"hours": [0.0, hours[1]], "max": None,
                         "hourly": 0, "daily": row.daily_free or None})
                     hours = [hours[0], 24.0]
-                y = getattr(row, days[x - 1] + "_free")
                 agenda[str(x)].append({"hours": hours, "hourly": 0, "max": None,
                     "daily": row.daily_free or None})
 
