@@ -91,6 +91,14 @@ class ZoneLoader(object):
             shell=True
         )
 
+        Logger.info("Importing carsharing service areas shapefiles")
+        subprocess.check_call(
+            "shp2pgsql -d -g geom -s 3857 -W LATIN1 -I {filename} service_areas_carsharing | "
+            "psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}"
+            .format(filename=script('service_areas_carsharing.shp'), **CONFIG),
+            shell=True
+        )
+
 
 class ServiceAreasLoader(DataSource):
     """

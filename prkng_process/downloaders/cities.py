@@ -30,8 +30,8 @@ class Montreal(DataSource):
         self.city = 'montreal'
         # ckan API
         self.url_signs = "http://donnees.ville.montreal.qc.ca/api/3/action/package_show?id=stationnement-sur-rue-signalisation-courant"
-
         self.url_roads = "http://donnees.ville.montreal.qc.ca/api/3/action/package_show?id=geobase"
+        self.url_faces = "http://donnees.ville.montreal.qc.ca/api/3/action/package_show?id=geobase-double"
 
         self.resources = (
             'Ahuntsic-Cartierville',
@@ -53,6 +53,7 @@ class Montreal(DataSource):
     def download(self):
         self.download_signs()
         self.download_roads()
+        self.download_faces()
 
     def download_roads(self):
         """
@@ -75,6 +76,32 @@ class Montreal(DataSource):
         Logger.info("Unzipping")
         with zipfile.ZipFile(zfile) as zip:
             self.road_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
+                name for name in zip.namelist()
+                if name.lower().endswith('.shp')
+            ][0])
+            zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
+
+    def download_faces(self):
+        """
+        Download blockfaces (géobase double) using CKAN API
+        """
+        json = requests.get(self.url_faces).json()
+        url = ''
+
+        for res in json['result']['resources']:
+            if res['name'].lower() == 'geobase double' and res['format'] == 'shp':
+                url = res['url']
+
+        Logger.info("Downloading Montreal Géobase-Double")
+        zfile = download_progress(
+            url.replace('ckanprod', 'donnees.ville.montreal.qc.ca'),
+            os.path.basename(url),
+            CONFIG['DOWNLOAD_DIRECTORY']
+        )
+
+        Logger.info("Unzipping")
+        with zipfile.ZipFile(zfile) as zip:
+            self.faces_shapefile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
             ][0])
@@ -143,6 +170,14 @@ class Montreal(DataSource):
             shell=True
         )
         self.db.vacuum_analyze("public", "montreal_geobase")
+
+        subprocess.check_call(
+            "shp2pgsql -d -g geom -s 2145:3857 -W LATIN1 -I {filename} montreal_geobase_double | "
+            "psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}"
+            .format(filename=self.faces_shapefile, **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "montreal_geobase_double")
 
         subprocess.check_call(
             "shp2pgsql -d -g geom -s 2145:3857 -W LATIN1 -I {filename} montreal_bornes | "
