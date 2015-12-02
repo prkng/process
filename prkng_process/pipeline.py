@@ -509,7 +509,7 @@ def run(cities=CITIES, osm=False, debug=False):
     db.create_index('parking_lots', 'agenda', index_type='gin')
 
     db.query("DROP TABLE IF EXISTS parking_lots_streetview;")
-    insert_lots_streetview("newyork", "lots_newyork_streetview.csv")
+    insert_lots_streetview("lots_newyork_streetview.csv")
 
     if 'montreal' in cities:
         process_montreal(debug)
@@ -578,8 +578,8 @@ def insert_raw_lots(city, filename):
 
 
 def insert_lots_streetview(filename):
-    with open(script('load_lots_streetview.sql'), 'rb') as infile:
-        self.db.query(infile.read().format(filename))
+    with open(os.path.join(os.path.dirname(__file__), 'data', 'load_lots_streetview.sql'), 'rb') as infile:
+        self.db.query(infile.read().format(os.path.join(os.path.dirname(__file__), 'data', filename)))
         self.db.vacuum_analyze("public", "parking_lots_streetview")
 
 
