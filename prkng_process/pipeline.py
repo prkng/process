@@ -501,7 +501,7 @@ def run(cities=CITIES, osm=False, debug=False):
     insert_raw_lots("quebec", "lots_quebec.csv")
     insert_parking_lots("quebec")
     db.query(common.create_parking_lots_raw.format(city="seattle"))
-    insert_raw_lots("quebec", "lots_seattle.csv")
+    insert_raw_lots("seattle", "lots_seattle.csv")
     insert_parking_lots("seattle")
     db.create_index('parking_lots', 'id')
     db.create_index('parking_lots', 'city')
@@ -579,8 +579,8 @@ def insert_raw_lots(city, filename):
 
 def insert_lots_streetview(filename):
     with open(os.path.join(os.path.dirname(__file__), 'data', 'load_lots_streetview.sql'), 'rb') as infile:
-        self.db.query(infile.read().format(os.path.join(os.path.dirname(__file__), 'data', filename)))
-        self.db.vacuum_analyze("public", "parking_lots_streetview")
+        db.query(infile.read().format(os.path.join(os.path.dirname(__file__), 'data', filename)))
+        db.vacuum_analyze("public", "parking_lots_streetview")
 
 
 def insert_parking_lots(city):

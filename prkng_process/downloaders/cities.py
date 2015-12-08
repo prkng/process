@@ -172,7 +172,7 @@ class Montreal(DataSource):
         self.db.vacuum_analyze("public", "montreal_geobase")
 
         subprocess.check_call(
-            "shp2pgsql -d -g geom -s 2145:3857 -W LATIN1 -I {filename} montreal_geobase_double | "
+            "shp2pgsql -d -g geom -s 4326:3857 -W LATIN1 -I {filename} montreal_geobase_double | "
             "psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}"
             .format(filename=self.faces_shapefile, **CONFIG),
             shell=True
