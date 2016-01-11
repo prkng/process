@@ -255,9 +255,9 @@ WITH exclusions AS (
     FROM exclusions ex
     JOIN update_original uo ON ex.id = uo.id
 )
-INSERT INTO {city}_slots_temp (rid, position, signposts, rules, way_name, geom)
+INSERT INTO {city}_slots_temp (r15id, position, signposts, rules, way_name, geom)
     SELECT
-        rid,
+        r15id,
         position,
         signposts,
         rules,
@@ -270,7 +270,7 @@ INSERT INTO {city}_slots_temp (rid, position, signposts, rules, way_name, geom)
 create_client_data = """
 UPDATE slots SET
     geojson = ST_AsGeoJSON(ST_Transform(geom, 4326))::jsonb,
-    button_location = json_build_object('long', ST_X(ST_Transform(ST_Line_Interpolate_Point(geom, 0.5), 4326)),
+    centerpoint = json_build_object('long', ST_X(ST_Transform(ST_Line_Interpolate_Point(geom, 0.5), 4326)),
         'lat', ST_Y(ST_Transform(ST_Line_Interpolate_Point(geom, 0.5), 4326)))::jsonb,
     button_locations = (case when st_length(geom) >= 300 then array_to_json(array[
         json_build_object('long', ST_X(ST_Transform(ST_Line_Interpolate_Point(geom, 0.333), 4326)),

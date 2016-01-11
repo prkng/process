@@ -147,7 +147,7 @@ def process_montreal(debug=False):
     db.query(mrl.create_signpost)
     db.query(mrl.insert_signpost)
     db.create_index('montreal_signpost', 'geom', index_type='gist')
-    db.create_index('montreal_signpost', 'geobase_id')
+    db.create_index('montreal_signpost', 'r13id')
     db.vacuum_analyze('public', 'montreal_signpost')
 
     info("Matching OSM roads with geobase")
@@ -161,7 +161,7 @@ def process_montreal(debug=False):
                 .format(str(duplicates)))
 
     db.create_index('montreal_signpost_onroad', 'id')
-    db.create_index('montreal_signpost_onroad', 'road_id')
+    db.create_index('montreal_signpost_onroad', 'r14id')
     db.create_index('montreal_signpost_onroad', 'isleft')
     db.create_index('montreal_signpost_onroad', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'montreal_signpost_onroad')
@@ -235,7 +235,7 @@ def process_newyork(debug=False):
     db.query(nyc.create_signpost)
     db.query(nyc.insert_signpost)
     db.create_index('newyork_signpost', 'id')
-    db.create_index('newyork_signpost', 'geobase_id')
+    db.create_index('newyork_signpost', 'r13id')
     db.create_index('newyork_signpost', 'signs', index_type='gin')
     db.create_index('newyork_signpost', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'newyork_signpost')
@@ -275,13 +275,13 @@ def process_newyork(debug=False):
         with tmp as (
             select *
             from (
-                select g.id, count(distinct s.order_no)
-                from newyork_roads_geobase g
-                join newyork_signpost s on s.geobase_id = g.id
-                group by g.id
+                select r.r14id, count(distinct s.order_no)
+                from roads r
+                join newyork_signpost s on s.r13id = r.r13id
+                group by r.r14id
             ) foo where count > 2
         )
-        delete from newyork_slots_likely s using tmp t where t.id = s.rid;
+        delete from newyork_slots_likely s using tmp t where t.r14id = s.r14id;
     """)
 
     db.create_index('newyork_slots_likely', 'id')
@@ -341,7 +341,7 @@ def process_seattle(debug=False):
     db.query(sea.create_signpost)
     db.query(sea.insert_signpost)
     db.create_index('seattle_signpost', 'id')
-    db.create_index('seattle_signpost', 'geobase_id')
+    db.create_index('seattle_signpost', 'r13id')
     db.create_index('seattle_signpost', 'signs', index_type='gin')
     db.create_index('seattle_signpost', 'geom', index_type='gist')
     db.query(sea.add_signposts_to_sign)

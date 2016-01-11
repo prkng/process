@@ -383,7 +383,7 @@ WITH tmp AS (
             FROM montreal_slots_temp
             GROUP BY id
         ) foo
-    WHERE r.r13id = b.r13id
+    WHERE r.rid = b.geobase_id
         AND r.r14id = left(foo.r15id, -1)
         AND ST_DWithin(foo.geom, b.geom, 11)
     GROUP BY b.gid, b.geom, b.rate, b.rules, foo.id, foo.geom, foo.way_name
