@@ -231,6 +231,7 @@ class Quebec(DataSource):
         self.name = 'Quebec City'
         self.city = 'quebec'
         self.url = "http://donnees.ville.quebec.qc.ca/Handler.ashx?id=7&f=SHP"
+        self.url_roads = "http://donnees.ville.quebec.qc.ca/Handler.ashx?id=18&f=SHP"
         self.url_payant = "http://donnees.ville.quebec.qc.ca/Handler.ashx?id=8&f=SHP"
 
     def download(self):
@@ -247,6 +248,21 @@ class Quebec(DataSource):
         Logger.info("Unzipping")
         with zipfile.ZipFile(zfile) as zip:
             self.filename = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
+                name for name in zip.namelist()
+                if name.lower().endswith('.shp')
+            ][0])
+            zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
+
+        Logger.info("Downloading {} Géobase".format(self.name))
+        zfile = download_progress(
+            self.url_roads,
+            "quebec_roads_latest.zip",
+            CONFIG['DOWNLOAD_DIRECTORY']
+        )
+
+        Logger.info("Unzipping")
+        with zipfile.ZipFile(zfile) as zip:
+            self.filename_roads = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
                 name for name in zip.namelist()
                 if name.lower().endswith('.shp')
             ][0])
@@ -283,6 +299,14 @@ class Quebec(DataSource):
         self.db.create_index('quebec_panneau', 'id_voie_pu')
         self.db.create_index('quebec_panneau', 'lect_met')
         self.db.vacuum_analyze("public", "quebec_panneau")
+
+        subprocess.check_call(
+            "shp2pgsql -d -g geom -s 4326:3857 -W LATIN1 -I "
+            "{filename} quebec_geobase | "
+            "psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}"
+            .format(filename=self.filename_roads, **CONFIG),
+            shell=True
+        )
 
         subprocess.check_call(
             "shp2pgsql -d -g geom -s 4326:3857 -W LATIN1 -I "

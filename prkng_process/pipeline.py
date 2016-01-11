@@ -58,6 +58,9 @@ def process_quebec(debug=False):
     db.create_index('quebec_signpost', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'quebec_signpost')
 
+    info("Matching OSM roads with geobase")
+    db.query(qbc.match_roads_geobase)
+
     info("Add signpost id to signs")
     db.query(qbc.add_signposts_to_sign)
     db.vacuum_analyze('public', 'quebec_sign')
@@ -147,14 +150,9 @@ def process_montreal(debug=False):
     db.create_index('montreal_signpost', 'geobase_id')
     db.vacuum_analyze('public', 'montreal_signpost')
 
-    info("Matching osm roads with geobase")
+    info("Matching OSM roads with geobase")
     db.query(mrl.match_roads_geobase)
-    db.create_index('montreal_roads_geobase', 'id')
-    db.create_index('montreal_roads_geobase', 'id_trc')
-    db.create_index('montreal_roads_geobase', 'osm_id')
-    db.create_index('montreal_roads_geobase', 'name')
-    db.create_index('montreal_roads_geobase', 'geom', index_type='gist')
-    db.vacuum_analyze('public', 'montreal_roads_geobase')
+    db.query(mrl.match_geobase_double)
 
     info("Projecting signposts on road")
     duplicates = db.query(mrl.project_signposts)
@@ -242,14 +240,8 @@ def process_newyork(debug=False):
     db.create_index('newyork_signpost', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'newyork_signpost')
 
-    info("Matching osm roads with geobase")
+    info("Matching OSM roads with geobase")
     db.query(nyc.match_roads_geobase)
-    db.create_index('newyork_roads_geobase', 'id')
-    db.create_index('newyork_roads_geobase', 'osm_id')
-    db.create_index('newyork_roads_geobase', 'name')
-    db.create_index('newyork_roads_geobase', 'boro')
-    db.create_index('newyork_roads_geobase', 'geom', index_type='gist')
-    db.vacuum_analyze('public', 'newyork_roads_geobase')
 
     info("Match signposts to geobase")
     db.query(nyc.match_signposts)
@@ -304,21 +296,19 @@ def process_newyork(debug=False):
     db.create_index('newyork_nextpoints', 'direction')
     db.vacuum_analyze('public', 'newyork_nextpoints')
 
-    for x in ['K', 'M', 'Q', 'B', 'S']:
-        info("Creating slots between signposts (borough {})".format(x))
-        db.query(nyc.insert_slots_temp.format(boro=x, offset=LINE_OFFSET))
-        db.create_index('newyork_slots_temp', 'id')
-        db.create_index('newyork_slots_temp', 'geom', index_type='gist')
-        db.create_index('newyork_slots_temp', 'rules', index_type='gin')
-        db.vacuum_analyze('public', 'newyork_slots_temp')
+    info("Creating slots between signposts)")
+    db.query(nyc.insert_slots_temp.format(offset=LINE_OFFSET))
+    db.create_index('newyork_slots_temp', 'id')
+    db.create_index('newyork_slots_temp', 'geom', index_type='gist')
+    db.create_index('newyork_slots_temp', 'rules', index_type='gin')
+    db.vacuum_analyze('public', 'newyork_slots_temp')
 
     if debug:
         info("Creating debug slots")
-        for x in ['K', 'M', 'Q', 'B', 'S']:
-            db.query(nyc.create_slots_for_debug.format(boro=x, offset=LINE_OFFSET))
-            db.create_index('newyork_slots_debug', 'pkid')
-            db.create_index('newyork_slots_debug', 'geom', index_type='gist')
-            db.vacuum_analyze('public', 'newyork_slots_debug')
+        db.query(nyc.create_slots_for_debug.format(offset=LINE_OFFSET))
+        db.create_index('newyork_slots_debug', 'pkid')
+        db.create_index('newyork_slots_debug', 'geom', index_type='gist')
+        db.vacuum_analyze('public', 'newyork_slots_debug')
 
 
 def process_seattle(debug=False):
@@ -357,13 +347,8 @@ def process_seattle(debug=False):
     db.query(sea.add_signposts_to_sign)
     db.vacuum_analyze('public', 'seattle_signpost')
 
-    info("Matching osm roads with geobase")
+    info("Matching OSM roads with geobase")
     db.query(sea.match_roads_geobase)
-    db.create_index('seattle_roads_geobase', 'id')
-    db.create_index('seattle_roads_geobase', 'osm_id')
-    db.create_index('seattle_roads_geobase', 'name')
-    db.create_index('seattle_roads_geobase', 'geom', index_type='gist')
-    db.vacuum_analyze('public', 'seattle_roads_geobase')
 
     info("Projecting signposts on road")
     duplicates = db.query(sea.project_signposts)
@@ -463,7 +448,8 @@ def process_osm():
     info("Splitting ways on intersections")
     db.query(osm.split_osm_roads)
     db.create_index('roads', 'id')
-    db.create_index('roads', 'osm_id')
+    db.create_index('roads', 'r13id')
+    db.create_index('roads', 'r14id')
     db.create_index('roads', 'name')
     db.create_index('roads', 'geom', index_type='gist')
     db.vacuum_analyze('public', 'roads')

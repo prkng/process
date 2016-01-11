@@ -109,7 +109,7 @@ create_signpost = """
 DROP TABLE IF EXISTS seattle_signpost;
 CREATE TABLE seattle_signpost (
     id serial PRIMARY KEY
-    , geobase_id integer
+    , r13id varchar
     , signs integer[]
     , geom geometry(Point, 3857)
 );
@@ -117,9 +117,9 @@ CREATE TABLE seattle_signpost (
 
 
 insert_signpost = """
-INSERT INTO seattle_signpost (geobase_id, signs, geom)
+INSERT INTO seattle_signpost (r13id, signs, geom)
 SELECT
-    min(s.segkey),
+    ('0040' || min(s.segkey), 'fm000000000')),
     array_agg(DISTINCT s.id),
     ST_SetSRID(ST_MakePoint(avg(ST_X(s.geom)), avg(ST_Y(s.geom))), 3857)
 FROM seattle_sign s
@@ -129,15 +129,6 @@ GROUP BY s.segkey, s.distance
 
 # try to match osm ways with geobase
 match_roads_geobase = """
-DROP TABLE IF EXISTS seattle_roads_geobase;
-CREATE TABLE seattle_roads_geobase (
-    id integer
-    , osm_id bigint
-    , name varchar
-    , compkey integer
-    , geom geometry(Linestring, 3857)
-);
-
 WITH tmp AS (
     SELECT
         o.*
@@ -152,16 +143,13 @@ WITH tmp AS (
     JOIN seattle_geobase m ON o.geom && ST_Expand(m.geom, 10)
     WHERE ST_Contains(ST_Buffer(m.geom, 30), o.geom)
 )
-INSERT INTO seattle_roads_geobase
-SELECT
-    DISTINCT ON (id)
-    id
-    , osm_id
-    , name
-    , compkey
-    , geom
-FROM tmp
-WHERE rank = 1;
+UPDATE roads r
+    SET cid = 4,
+        did = 0,
+        rid = t.compkey
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
 
 
 -- invert buffer comparison to catch more ways
@@ -176,23 +164,29 @@ WITH tmp AS (
                 , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
             ) AS rank
       FROM roads o
-      LEFT JOIN seattle_roads_geobase orig ON orig.id = o.id
       JOIN seattle_geobase m ON o.geom && ST_Expand(m.geom, 10)
       WHERE ST_Contains(ST_Buffer(o.geom, 30), m.geom)
-        AND orig.id IS NULL
+        AND o.rid IS NULL
 )
-INSERT INTO seattle_roads_geobase
-SELECT
-    DISTINCT ON (id)
-    id
-    , osm_id
-    , name
-    , compkey
-    , geom
-FROM tmp
-WHERE rank = 1;
-"""
+UPDATE roads r
+    SET cid = 4,
+        did = 0,
+        rid = t.compkey
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
 
+UPDATE roads r
+    SET sid = g.rn
+    FROM (
+        SELECT x.id, ROW_NUMBER() OVER (PARTITION BY x.rid
+            ORDER BY ST_Distance(ST_StartPoint(x.geom), ST_StartPoint(ST_LineMerge(n.geom)))) AS rn
+        FROM roads x
+        JOIN seattle_geobase n ON n.compkey = x.rid
+        WHERE x.cid = 4
+    ) AS g
+    WHERE r.id = g.id AND g.rn < 10
+"""
 
 assign_directions = """
 UPDATE seattle_sign s
@@ -275,8 +269,8 @@ SET direction = (
        )
        END
       )
-FROM seattle_signs_raw p, seattle_signpost x, seattle_roads_geobase g
-WHERE s.sid = p.unitid AND s.signpost = x.id AND x.geobase_id = g.compkey
+FROM seattle_signs_raw p, seattle_signpost x, roads g
+WHERE s.sid = p.unitid AND s.signpost = x.id AND x.r13id = g.r13id
 """
 
 
@@ -287,12 +281,12 @@ DROP TABLE IF EXISTS seattle_signpost_onroad;
 CREATE TABLE seattle_signpost_onroad AS
     SELECT
         DISTINCT ON (sp.id) sp.id  -- hack to prevent duplicata
-        , s.id AS road_id
-        , ST_ClosestPoint(s.geom, sp.geom)::geometry(point, 3857) AS geom
-        , ST_isLeft(s.geom, sp.geom) AS isleft
+        , r.r14id AS r14id
+        , ST_ClosestPoint(r.geom, sp.geom)::geometry(point, 3857) AS geom
+        , ST_isLeft(r.geom, sp.geom) AS isleft
     FROM seattle_signpost sp
-    JOIN seattle_roads_geobase s ON sp.geobase_id = s.compkey
-    ORDER BY sp.id, ST_Distance(s.geom, sp.geom);
+    JOIN roads r USING (r13id)
+    ORDER BY sp.id, ST_Distance(r.geom, sp.geom);
 
 SELECT id FROM seattle_signpost_onroad GROUP BY id HAVING count(*) > 1
 """
@@ -345,7 +339,7 @@ DROP TABLE IF EXISTS seattle_slots_likely;
 CREATE TABLE seattle_slots_likely(
     id serial
     , signposts integer[]
-    , rid integer  -- road id
+    , r14id varchar  -- road id
     , position float
     , geom geometry(linestring, 3857)
 );
@@ -355,49 +349,48 @@ CREATE TABLE seattle_slots_likely(
 insert_slots_likely = """
 WITH selected_roads AS (
     SELECT
-        r.id as rid
+        r.r14id as r14id
         , r.geom as rgeom
         , p.id as pid
         , p.geom as pgeom
-    FROM seattle_roads_geobase r, seattle_signpost_onroad p
-    where r.geom && p.geom
-        AND r.id = p.road_id
-        AND p.isleft = {isleft}
+    FROM roads r, seattle_signpost_onroad p
+    WHERE r.r14id  = p.r14id
+      AND p.isleft = {isleft}
 ), point_list AS (
     SELECT
-        distinct rid
+        distinct r14id
         , 0 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        distinct rid
+        distinct r14id
         , 1 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        rid
+        r14id
         , st_line_locate_point(rgeom, pgeom) as position
         , pid as signpost
     FROM selected_roads
 ), loc_with_idx as (
-    SELECT DISTINCT ON (rid, position)
-        rid
+    SELECT DISTINCT ON (r14id, position)
+        r14id
         , position
-        , rank() over (partition by rid order by position) as idx
+        , rank() over (partition by r14id order by position) as idx
         , signpost
     FROM point_list
 )
-INSERT INTO seattle_slots_likely (signposts, rid, position, geom)
+INSERT INTO seattle_slots_likely (signposts, r14id, position, geom)
 SELECT
     ARRAY[loc1.signpost, loc2.signpost]
-    , w.id
+    , r.r14id
     , loc1.position as position
-    , st_line_substring(w.geom, loc1.position, loc2.position) as geom
+    , st_line_substring(r.geom, loc1.position, loc2.position) as geom
 FROM loc_with_idx loc1
-JOIN loc_with_idx loc2 using (rid)
-JOIN seattle_roads_geobase w on w.id = loc1.rid
+JOIN loc_with_idx loc2 using (r14id)
+JOIN roads r on r.r14id = loc1.r14id
 WHERE loc2.idx = loc1.idx+1;
 """
 
@@ -449,13 +442,14 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM seattle_slots_likely sl
     JOIN seattle_sign s on ARRAY[s.signpost] <@ sl.signposts
     JOIN seattle_signpost_onroad spo on s.signpost = spo.id
     JOIN seattle_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN seattle_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb ON spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -466,17 +460,16 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM seattle_slots_likely sl
     JOIN seattle_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN seattle_signpost_onroad spo on s.signpost = spo.id
-    JOIN seattle_roads_geobase rb on spo.road_id = rb.id
-),
-selection as (
+    JOIN roads rb ON spo.r14id = rb.r14id
+), selection as (
 SELECT
     distinct on (t.id) t.id
     , min(signposts) as signposts
-    , min(isleft) as isleft
-    , min(rid) as rid
+    , min(r15id) as r15id
     , min(position) as position
     , min(name) as way_name
     , array_to_json(
@@ -500,9 +493,9 @@ FROM tmp t
 JOIN rules r ON t.code = r.code
 WHERE ST_GeometryType(ST_OffsetCurve(t.geom, ({offset} * isleft), 'quad_segs=4 join=round')::geometry) = 'ST_LineString'
 GROUP BY t.id
-) INSERT INTO seattle_slots_temp (rid, position, signposts, rules, geom, way_name)
+) INSERT INTO seattle_slots_temp (r15id, position, signposts, rules, geom, way_name)
 SELECT
-    rid
+    r15id
     , position
     , signposts
     , rules
@@ -531,7 +524,7 @@ CREATE TABLE seattle_slots_debug as
     JOIN seattle_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN seattle_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -545,7 +538,7 @@ CREATE TABLE seattle_slots_debug as
     FROM seattle_slots_likely sl
     JOIN seattle_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN seattle_signpost_onroad spo on s.signpost = spo.id
-    JOIN seattle_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 )
 SELECT
     distinct on (t.id, t.code)

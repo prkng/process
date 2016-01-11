@@ -57,7 +57,7 @@ DROP TABLE IF EXISTS newyork_signpost;
 CREATE TABLE newyork_signpost (
     id serial PRIMARY KEY
     , boro varchar
-    , geobase_id integer
+    , r13id varchar
     , order_no varchar
     , signs integer[]
     , geom geometry(Point, 3857)
@@ -79,29 +79,11 @@ GROUP BY sg_order_n, sr_dist
 
 # try to match osm ways with geobase
 match_roads_geobase = """
-DROP TABLE IF EXISTS newyork_roads_geobase;
-CREATE TABLE newyork_roads_geobase (
-    id integer
-    , osm_id bigint
-    , boro varchar
-    , name varchar
-    , physicalid integer
-    , b5sc integer
-    , geom geometry(Linestring, 3857)
-);
-
 WITH tmp AS (
     SELECT
         o.*
-        , m.b5sc::int
+        , m.boroughcod::int
         , m.physicalid::int
-        , (CASE m.boroughcod::int
-            WHEN 1 THEN 'M' -- Manhattan
-            WHEN 2 THEN 'B' -- The Bronx
-            WHEN 3 THEN 'K' -- Brooklyn
-            WHEN 4 THEN 'Q' -- Queens
-            WHEN 5 THEN 'S' -- Staten Island
-          END) AS boro
         , rank() OVER (
             PARTITION BY o.id ORDER BY
               ST_HausdorffDistance(o.geom, m.geom)
@@ -113,33 +95,21 @@ WITH tmp AS (
     JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7sc::int = s.b7sc
     WHERE ST_Contains(ST_Buffer(m.geom, 30), o.geom)
 )
-INSERT INTO newyork_roads_geobase
-SELECT
-    DISTINCT ON (id)
-    id
-    , osm_id
-    , boro
-    , name
-    , physicalid
-    , b5sc
-    , geom
-FROM tmp
-WHERE rank = 1;
+UPDATE roads r
+    SET cid = 3,
+        did = t.boroughcod,
+        rid = t.physicalid
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
 
 
 -- invert buffer comparison to catch more ways
 WITH tmp AS (
       SELECT
           o.*
-          , m.b5sc::int
+          , m.boroughcod::int
           , m.physicalid::int
-          , (CASE m.boroughcod::int
-              WHEN 1 THEN 'M' -- Manhattan
-              WHEN 2 THEN 'B' -- The Bronx
-              WHEN 3 THEN 'K' -- Brooklyn
-              WHEN 4 THEN 'Q' -- Queens
-              WHEN 5 THEN 'S' -- Staten Island
-            END) AS boro
           , rank() OVER (
               PARTITION BY o.id ORDER BY
                 ST_HausdorffDistance(o.geom, m.geom)
@@ -147,47 +117,60 @@ WITH tmp AS (
                 , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
             ) AS rank
       FROM roads o
-      LEFT JOIN newyork_roads_geobase orig ON orig.id = o.id
       JOIN newyork_geobase m ON o.geom && ST_Expand(m.geom, 10)
       JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7sc::int = s.b7sc
       WHERE ST_Contains(ST_Buffer(o.geom, 30), m.geom)
-        AND orig.id IS NULL
+        AND o.rid IS NULL
 )
-INSERT INTO newyork_roads_geobase
-SELECT
-    DISTINCT ON (id)
-    id
-    , osm_id
-    , boro
-    , name
-    , physicalid
-    , b5sc
-    , geom
-FROM tmp
-WHERE rank = 1;
+UPDATE roads r
+    SET cid = 3,
+        did = t.boroughcod,
+        rid = t.physicalid
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
+
+UPDATE roads r
+    SET sid = g.rn
+    FROM (
+        SELECT x.id, ROW_NUMBER() OVER (PARTITION BY x.rid
+            ORDER BY ST_Distance(ST_StartPoint(x.geom), ST_StartPoint(ST_LineMerge(n.geom)))) AS rn
+        FROM roads x
+        JOIN newyork_geobase n ON n.physicalid = x.rid
+        WHERE x.cid = 3
+    ) AS g
+    WHERE r.id = g.id AND g.rn < 10
 """
 
 match_signposts = """
 WITH wsndname AS (
     SELECT
-        g.id,
-        g.boro,
-        btrim(s.stname_lab) AS snd_name
-    FROM newyork_roads_geobase g
+        r.id,
+        r.r13id,
+        r.geom,
+        btrim(s.stname_lab) AS snd_name,
+        (CASE g.boroughcod::int
+            WHEN 1 THEN 'M' -- Manhattan
+            WHEN 2 THEN 'B' -- The Bronx
+            WHEN 3 THEN 'K' -- Brooklyn
+            WHEN 4 THEN 'Q' -- Queens
+            WHEN 5 THEN 'S' -- Staten Island
+         END) AS boro
+    FROM roads r
+    JOIN newyork_geobase g ON r.cid = 3 AND r.rid = g.physicalid
     JOIN newyork_snd s ON g.b5sc::int = s.b5sc
 ), posts AS (
     SELECT
         DISTINCT ON (s.id)
         s.id AS sid,
-        g.id AS gid
+        x.r13id AS r13id
     FROM newyork_signpost s
     JOIN newyork_roads_locations l ON s.boro = l.boro AND s.order_no = l.order_no
-    JOIN wsndname x ON btrim(split_part(l.main_st, '*', 1)) = x.snd_name
-    JOIN newyork_roads_geobase g ON x.id = g.id
-    ORDER BY s.id, ST_Distance(g.geom, s.geom)
+    JOIN wsndname x ON l.boro = x.boro AND btrim(split_part(l.main_st, '*', 1)) = x.snd_name
+    ORDER BY s.id, ST_Distance(x.geom, s.geom)
 )
 UPDATE newyork_signpost s
-SET geobase_id = p.gid
+SET r13id = p.r13id
 FROM posts p
 WHERE s.id = p.sid
 """
@@ -199,12 +182,12 @@ DROP TABLE IF EXISTS newyork_signpost_onroad;
 CREATE TABLE newyork_signpost_onroad AS
     SELECT
         DISTINCT ON (sp.id) sp.id  -- hack to prevent duplicata
-        , s.id AS road_id
-        , ST_ClosestPoint(s.geom, sp.geom)::geometry(point, 3857) AS geom
-        , ST_isLeft(s.geom, sp.geom) AS isleft
+        , r.r14id AS r14id
+        , ST_ClosestPoint(r.geom, sp.geom)::geometry(point, 3857) AS geom
+        , ST_isLeft(r.geom, sp.geom) AS isleft
     FROM newyork_signpost sp
-    JOIN newyork_roads_geobase s ON sp.geobase_id = s.id
-    ORDER BY sp.id, ST_Distance(s.geom, sp.geom);
+    JOIN roads r USING (r13id)
+    ORDER BY sp.id, ST_Distance(r.geom, sp.geom);
 
 SELECT id FROM newyork_signpost_onroad GROUP BY id HAVING count(*) > 1
 """
@@ -254,7 +237,7 @@ DROP TABLE IF EXISTS newyork_slots_likely;
 CREATE TABLE newyork_slots_likely(
     id serial
     , signposts integer[]
-    , rid integer  -- road id
+    , r14id varchar  -- road id
     , position float
     , geom geometry(linestring, 3857)
 );
@@ -263,49 +246,48 @@ CREATE TABLE newyork_slots_likely(
 insert_slots_likely = """
 WITH selected_roads AS (
     SELECT
-        r.id as rid
+        r.r14id AS r14id
         , r.geom as rgeom
         , p.id as pid
         , p.geom as pgeom
-    FROM newyork_roads_geobase r, newyork_signpost_onroad p
-    WHERE r.geom && p.geom
-        AND r.id = p.road_id
-        AND p.isleft = {isleft}
+    FROM roads r, newyork_signpost_onroad p
+    WHERE r.r14id  = p.r14id
+      AND p.isleft = {isleft}
 ), point_list AS (
     SELECT
-        DISTINCT rid
+        DISTINCT r14id
         , 0 AS position
         , 0 AS signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        DISTINCT rid
+        DISTINCT r14id
         , 1 AS position
         , 0 AS signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        rid
+        r14id
         , ST_Line_Locate_Point(rgeom, pgeom) AS position
         , pid AS signpost
     FROM selected_roads
 ), loc_with_idx AS (
-    SELECT DISTINCT ON (rid, position)
-        rid
+    SELECT DISTINCT ON (r14id, position)
+        r14id
         , position
-        , rank() OVER (PARTITION BY rid ORDER BY position) AS idx
+        , rank() OVER (PARTITION BY r14id ORDER BY position) AS idx
         , signpost
     FROM point_list
 )
-INSERT INTO newyork_slots_likely (signposts, rid, position, geom)
+INSERT INTO newyork_slots_likely (signposts, r14id, position, geom)
 SELECT
     ARRAY[loc1.signpost, loc2.signpost]
-    , w.id
+    , r.r14id
     , loc1.position AS position
-    , ST_Line_Substring(w.geom, loc1.position, loc2.position) AS geom
+    , ST_Line_Substring(r.geom, loc1.position, loc2.position) AS geom
 FROM loc_with_idx loc1
-JOIN loc_with_idx loc2 USING (rid)
-JOIN newyork_roads_geobase w ON w.id = loc1.rid
+JOIN loc_with_idx loc2 USING (r14id)
+JOIN roads r ON r.r14id = loc1.r14id
 WHERE loc2.idx = loc1.idx+1;
 """
 
@@ -357,15 +339,14 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
-        , rb.boro
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM newyork_slots_likely sl
     JOIN newyork_sign s ON ARRAY[s.signpost] <@ sl.signposts
     JOIN newyork_signpost_onroad spo ON s.signpost = spo.id
     JOIN newyork_nextpoints np ON np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN newyork_roads_geobase rb ON spo.road_id = rb.id
-    WHERE rb.boro = '{boro}'
+    JOIN roads rb ON spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -376,18 +357,16 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
-        , rb.boro
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM newyork_slots_likely sl
     JOIN newyork_sign s ON ARRAY[s.signpost] <@ sl.signposts AND direction = 0
     JOIN newyork_signpost_onroad spo ON s.signpost = spo.id
-    JOIN newyork_roads_geobase rb ON spo.road_id = rb.id
-    WHERE rb.boro = '{boro}'
+    JOIN roads rb ON spo.r14id = rb.r14id
 ), selection AS (
 SELECT
     distinct on (t.id) t.id
     , min(signposts) as signposts
-    , min(isleft) as isleft
-    , min(rid) as rid
+    , min(r15id) as r15id
     , min(position) as position
     , min(name) as way_name
     , array_to_json(
@@ -408,19 +387,15 @@ SELECT
             'permit_no', (CASE WHEN r.permit_no = '' THEN NULL ELSE r.permit_no END)
         )::jsonb
     ))::jsonb as rules
-    , CASE
-        WHEN min(isleft) = 1 then
-            ST_OffsetCurve(min(t.geom), {offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-        ELSE
-            ST_OffsetCurve(min(t.geom), -{offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-      END as geom
+    , ST_OffsetCurve(min(t.geom), (min(isleft) * {offset}),
+            'quad_segs=4 join=round')::geometry(linestring, 3857) as geom
 FROM tmp t
 JOIN rules r ON t.code = r.code
 LEFT JOIN metered_rate_zones z ON 'paid' = ANY(r.restrict_types) AND z.city = 'newyork' AND ST_Intersects(t.geom, z.geom)
 GROUP BY t.id
-) INSERT INTO newyork_slots_temp (rid, position, signposts, rules, geom, way_name)
+) INSERT INTO newyork_slots_temp (r15id, position, signposts, rules, geom, way_name)
 SELECT
-    rid
+    r15id
     , position
     , signposts
     , rules
@@ -449,8 +424,7 @@ CREATE TABLE newyork_slots_debug as
     JOIN newyork_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN newyork_roads_geobase rb on spo.road_id = rb.id
-    WHERE rb.boro = '{boro}'
+    JOIN roads rb on spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -464,8 +438,7 @@ CREATE TABLE newyork_slots_debug as
     FROM newyork_slots_likely sl
     JOIN newyork_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN newyork_signpost_onroad spo on s.signpost = spo.id
-    JOIN newyork_roads_geobase rb on spo.road_id = rb.id
-    WHERE rb.boro = '{boro}'
+    JOIN roads rb on spo.r14id = rb.r14id
 )
 SELECT
     distinct on (t.id, t.code)
@@ -494,12 +467,8 @@ SELECT
     , rt.restrict_types
     , rt.permit_no
     , r.agenda::text as agenda
-    , CASE
-        WHEN isleft = 1 then
-            ST_OffsetCurve(t.geom, {offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-        ELSE
-            ST_OffsetCurve(t.geom, -{offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-      END as geom
+    , ST_OffsetCurve(t.geom, (isleft * {offset}),
+            'quad_segs=4 join=round')::geometry(linestring, 3857) as geom
 FROM tmp t
 JOIN rules r on t.code = r.code
 JOIN newyork_rules_translation rt on rt.code = r.code

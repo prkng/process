@@ -59,7 +59,7 @@ DROP TABLE IF EXISTS {city}_slots_temp;
 CREATE TABLE {city}_slots_temp
 (
   id serial PRIMARY KEY,
-  rid integer,
+  r15id varchar,
   position float,
   signposts integer[],
   rules jsonb,
@@ -71,15 +71,14 @@ CREATE TABLE {city}_slots_temp
 create_slots = """
 CREATE TABLE IF NOT EXISTS slots
 (
-  id serial PRIMARY KEY,
+  id varchar PRIMARY KEY,
   city varchar,
-  rid integer,
+  r15id varchar,
   signposts integer[],
   rules jsonb,
   way_name varchar,
   geom geometry(LineString,3857),
   geojson jsonb,
-  button_location jsonb,
   button_locations jsonb
 )
 """
@@ -179,18 +178,21 @@ DO
 $$
 DECLARE
   slot record;
-  id_match integer;
+  scount integer;
+  id_match varchar;
 BEGIN
-  FOR slot IN SELECT * FROM {city}_slots_temp ORDER BY rid, position LOOP
+  FOR slot IN SELECT * FROM {city}_slots_temp ORDER BY r15id, position LOOP
+    SELECT COUNT(*) FROM slots s WHERE slot.r15id = s.r15id INTO scount;
     SELECT id FROM slots s
-      WHERE slot.rid = s.rid
+      WHERE slot.r15id = s.r15id
         AND slot.rules = s.rules
         AND ST_DWithin(slot.geom, s.geom, 0.1)
       LIMIT 1 INTO id_match;
 
     IF id_match IS NULL THEN
-      INSERT INTO slots (city, rid, signposts, rules, geom, way_name) VALUES
-        ('{city}', slot.rid, ARRAY[slot.signposts], slot.rules, slot.geom, slot.way_name);
+      INSERT INTO slots (id, city, r15id, signposts, rules, geom, way_name) VALUES
+        ((slot.r15id || to_char(scount, 'fm00')), '{city}', slot.r15id, ARRAY[slot.signposts],
+            slot.rules, slot.geom, slot.way_name);
     ELSE
       UPDATE slots SET geom =
         (CASE WHEN ST_DWithin(ST_StartPoint(slot.geom), ST_EndPoint(geom), 0.5)
@@ -198,7 +200,7 @@ BEGIN
             ELSE ST_MakeLine(slot.geom, geom)
         END),
         signposts = (signposts || ARRAY[slot.signposts])
-      WHERE city = '{city}' AND slots.id = id_match;
+      WHERE slots.id = id_match;
     END IF;
   END LOOP;
 END;

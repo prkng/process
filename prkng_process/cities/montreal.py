@@ -62,7 +62,7 @@ create_signpost = """
 DROP TABLE IF EXISTS montreal_signpost;
 CREATE TABLE montreal_signpost (
     id integer PRIMARY KEY
-    , geobase_id integer
+    , r13id varchar
     , geom geometry(Point, 3857)
 )
 """
@@ -72,7 +72,7 @@ insert_signpost = """
 INSERT INTO montreal_signpost
     SELECT
         distinct s.signpost
-        , pt.trc_id::integer
+        , ('0010' || to_char(pt.trc_id::integer, 'fm000000000'))
         , pt.geom
     FROM montreal_sign s
     JOIN montreal_poteaux pt ON pt.poteau_id_pot = s.signpost
@@ -81,20 +81,9 @@ INSERT INTO montreal_signpost
 
 # try to match osm ways with geobase
 match_roads_geobase = """
-DROP TABLE IF EXISTS montreal_roads_geobase;
-CREATE TABLE montreal_roads_geobase (
-    id integer
-    , osm_id bigint
-    , name varchar
-    , geobase_name varchar
-    , id_trc integer
-    , geom geometry(linestring, 3857)
-);
-
 WITH tmp as (
 SELECT
     o.*
-    , m.nom_voie as geobase_name
     , m.id_trc
     , rank() over (
         partition by o.id order by
@@ -106,22 +95,18 @@ FROM roads o
 JOIN montreal_geobase m on o.geom && st_expand(m.geom, 10)
 WHERE st_contains(st_buffer(m.geom, 30), o.geom)
 )
-INSERT INTO montreal_roads_geobase
-SELECT
-    id
-    , osm_id
-    , name
-    , geobase_name
-    , id_trc
-    , geom
-FROM tmp
-WHERE rank = 1;
+UPDATE roads r
+    SET cid = 1,
+        did = 0,
+        rid = t.id_trc
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
 
 -- invert buffer comparison to catch more ways
 WITH tmp as (
 SELECT
     o.*
-    , m.nom_voie as geobase_name
     , m.id_trc
     , rank() over (
         partition by o.id order by
@@ -130,21 +115,45 @@ SELECT
             , abs(st_length(o.geom) - st_length(m.geom)) / greatest(st_length(o.geom), st_length(m.geom))
       ) as rank
 FROM roads o
-LEFT JOIN montreal_roads_geobase orig on orig.id = o.id
 JOIN montreal_geobase m on o.geom && st_expand(m.geom, 10)
 WHERE st_contains(st_buffer(o.geom, 30), m.geom)
-      AND orig.id is NULL
+  AND o.rid IS NULL
 )
-INSERT INTO montreal_roads_geobase
-SELECT
-    id
-    , osm_id
-    , name
-    , geobase_name
-    , id_trc
-    , geom
-FROM tmp
-WHERE rank = 1
+UPDATE roads r
+    SET cid = 1,
+        did = 0,
+        rid = t.id_trc
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
+
+
+UPDATE roads r
+    SET sid = g.rn
+    FROM (
+        SELECT x.id, ROW_NUMBER() OVER (PARTITION BY x.rid
+            ORDER BY ST_Distance(ST_StartPoint(x.geom), ST_StartPoint(ST_LineMerge(n.geom)))) AS rn
+        FROM roads x
+        JOIN montreal_geobase n ON n.id_trc = x.rid
+        WHERE x.cid = 1
+    ) AS g
+    WHERE r.id = g.id AND g.rn < 10
+"""
+
+match_geobase_double = """
+UPDATE roads r
+    SET lrid = d.cote_rue_i
+    FROM montreal_geobase_double d
+    JOIN montreal_geobase g ON g.id_trc = d.id_trc
+    WHERE r.r13id = ('0010' || to_char(d.id_trc, 'fm000000000'))
+        AND ST_isLeft(ST_LineMerge(g.geom), ST_StartPoint(ST_LineMerge(d.geom))) = 1;
+
+UPDATE roads r
+    SET rrid = d.cote_rue_i
+    FROM montreal_geobase_double d
+    JOIN montreal_geobase g ON g.id_trc = d.id_trc
+    WHERE r.r13id = ('0010' || to_char(d.id_trc, 'fm000000000'))
+        AND ST_isLeft(ST_LineMerge(g.geom), ST_StartPoint(ST_LineMerge(d.geom))) = -1;
 """
 
 # project signposts on road and
@@ -154,12 +163,12 @@ DROP TABLE IF EXISTS montreal_signpost_onroad;
 CREATE TABLE montreal_signpost_onroad AS
     SELECT
         distinct on (sp.id) sp.id  -- hack to prevent duplicata, FIXME
-        , s.id as road_id
-        , st_closestpoint(s.geom, sp.geom)::geometry(point, 3857) as geom
-        , st_isleft(s.geom, sp.geom) as isleft
+        , r.r14id as r14id
+        , st_closestpoint(r.geom, sp.geom)::geometry(point, 3857) as geom
+        , st_isleft(r.geom, sp.geom) as isleft
     FROM montreal_signpost sp
-    JOIN montreal_roads_geobase s on s.id_trc = sp.geobase_id
-    ORDER BY sp.id, ST_Distance(s.geom, sp.geom);
+    JOIN roads r USING (r13id)
+    ORDER BY sp.id, ST_Distance(r.geom, sp.geom);
 
 SELECT id from montreal_signpost_onroad group by id having count(*) > 1
 """
@@ -197,7 +206,7 @@ DROP TABLE IF EXISTS montreal_slots_likely;
 CREATE TABLE montreal_slots_likely(
     id serial
     , signposts integer[]
-    , rid integer  -- road id
+    , r14id varchar  -- road id
     , position float
     , geom geometry(linestring, 3857)
 );
@@ -206,49 +215,48 @@ CREATE TABLE montreal_slots_likely(
 insert_slots_likely = """
 WITH selected_roads AS (
     SELECT
-        r.id as rid
+        r.r14id as r14id
         , r.geom as rgeom
         , p.id as pid
         , p.geom as pgeom
-    FROM montreal_roads_geobase r, montreal_signpost_onroad p
-    where r.geom && p.geom
-        AND r.id = p.road_id
-        AND p.isleft = {isleft}
+    FROM roads r, montreal_signpost_onroad p
+    WHERE r.r14id  = p.r14id
+      AND p.isleft = {isleft}
 ), point_list AS (
     SELECT
-        distinct rid
+        distinct r14id
         , 0 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        distinct rid
+        distinct r14id
         , 1 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        rid
+        r14id
         , st_line_locate_point(rgeom, pgeom) as position
         , pid as signpost
     FROM selected_roads
 ), loc_with_idx as (
-    SELECT DISTINCT ON (rid, position)
-        rid
+    SELECT DISTINCT ON (r14id, position)
+        r14id
         , position
-        , rank() over (partition by rid order by position) as idx
+        , rank() over (partition by r14id order by position) as idx
         , signpost
     FROM point_list
 )
-INSERT INTO montreal_slots_likely (signposts, rid, position, geom)
+INSERT INTO montreal_slots_likely (signposts, r14id, position, geom)
 SELECT
     ARRAY[loc1.signpost, loc2.signpost]
-    , w.id
+    , r.r14id
     , loc1.position as position
-    , st_line_substring(w.geom, loc1.position, loc2.position) as geom
+    , st_line_substring(r.geom, loc1.position, loc2.position) as geom
 FROM loc_with_idx loc1
-JOIN loc_with_idx loc2 using (rid)
-JOIN montreal_roads_geobase w on w.id = loc1.rid
+JOIN loc_with_idx loc2 USING (r14id)
+JOIN roads r ON r.r14id = loc1.r14id
 WHERE loc2.idx = loc1.idx+1;
 """
 
@@ -298,13 +306,14 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM montreal_slots_likely sl
     JOIN montreal_sign s on ARRAY[s.signpost] <@ sl.signposts
     JOIN montreal_signpost_onroad spo on s.signpost = spo.id
     JOIN montreal_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN montreal_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb ON spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -315,17 +324,16 @@ WITH tmp AS (
         , s.direction
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM montreal_slots_likely sl
     JOIN montreal_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN montreal_signpost_onroad spo on s.signpost = spo.id
-    JOIN montreal_roads_geobase rb on spo.road_id = rb.id
-),
-selection as (
+    JOIN roads rb ON spo.r14id = rb.r14id
+), selection as (
 SELECT
     distinct on (t.id) t.id
     , min(signposts) as signposts
-    , min(isleft) as isleft
-    , min(rid) as rid
+    , min(r15id) as r15id
     , min(position) as position
     , min(name) as way_name
     , array_to_json(
@@ -343,19 +351,15 @@ SELECT
             'permit_no', z.number
         )::jsonb
     ))::jsonb as rules
-    , CASE
-        WHEN min(isleft) = 1 then
-            ST_OffsetCurve(min(t.geom), {offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-        ELSE
-            ST_OffsetCurve(min(t.geom), -{offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-      END as geom
+    , ST_OffsetCurve(min(t.geom), (min(isleft) * {offset}),
+            'quad_segs=4 join=round')::geometry(linestring, 3857) AS geom
 FROM tmp t
 JOIN rules r ON t.code = r.code
 LEFT JOIN permit_zones z ON 'permit' = ANY(r.restrict_types) AND ST_Intersects(t.geom, z.geom)
 GROUP BY t.id
-) INSERT INTO montreal_slots_temp (rid, position, signposts, rules, geom, way_name)
+) INSERT INTO montreal_slots_temp (r15id, position, signposts, rules, geom, way_name)
 SELECT
-    rid
+    r15id
     , position
     , signposts
     , rules
@@ -373,15 +377,15 @@ WITH tmp AS (
         foo.id AS slot_id,
         foo.way_name,
         array_agg(foo.rules) AS orig_rules
-    FROM montreal_bornes b, montreal_roads_geobase r,
+    FROM montreal_bornes b, roads r,
         (
-            SELECT id, rid, way_name, geom, jsonb_array_elements(rules) AS rules
+            SELECT id, r15id, way_name, geom, jsonb_array_elements(rules) AS rules
             FROM montreal_slots_temp
             GROUP BY id
         ) foo
-    WHERE r.id_trc = b.geobase_id
-        AND r.id = foo.rid
-        AND ST_DWithin(foo.geom, b.geom, 12)
+    WHERE r.r13id = b.r13id
+        AND r.r14id = left(foo.r15id, -1)
+        AND ST_DWithin(foo.geom, b.geom, 11)
     GROUP BY b.gid, b.geom, b.rate, b.rules, foo.id, foo.geom, foo.way_name
     ORDER BY foo.id, ST_Distance(foo.geom, b.geom)
 ), new_slots AS (
@@ -429,7 +433,7 @@ CREATE TABLE montreal_slots_debug as
     JOIN montreal_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN montreal_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -443,7 +447,7 @@ CREATE TABLE montreal_slots_debug as
     FROM montreal_slots_likely sl
     JOIN montreal_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN montreal_signpost_onroad spo on s.signpost = spo.id
-    JOIN montreal_roads_geobase rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 )
 SELECT
     distinct on (t.id, t.code)
@@ -471,12 +475,8 @@ SELECT
     , rt.special_days
     , rt.restrict_types
     , r.agenda::text as agenda
-    , CASE
-        WHEN isleft = 1 then
-            ST_OffsetCurve(t.geom, {offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-        ELSE
-            ST_OffsetCurve(t.geom, -{offset}, 'quad_segs=4 join=round')::geometry(linestring, 3857)
-      END as geom
+    , ST_OffsetCurve(t.geom, (isleft * {offset}),
+            'quad_segs=4 join=round')::geometry(linestring, 3857) AS geom
 FROM tmp t
 JOIN rules r on t.code = r.code
 JOIN montreal_rules_translation rt on rt.code = r.code

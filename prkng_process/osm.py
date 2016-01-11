@@ -102,9 +102,19 @@ RETURNING id;
 
 # split lines to create segments between intersections
 split_osm_roads = """
+DROP TRIGGER IF EXISTS road_r14id_trigger ON roads;
+DROP FUNCTION IF EXISTS update_road_r14id();
 DROP TABLE IF EXISTS roads;
 CREATE TABLE roads(
     id serial
+    , cid integer    -- City ID (3)
+    , did integer    -- District ID (1)
+    , rid integer    -- Road ID (9)
+    , sid integer    -- Segment ID (1)
+    , r13id varchar  -- Unique Road ID (13)
+    , r14id varchar  -- Unique Road Segment ID (14)
+    , lrid integer   -- Left-side Road ID from accompanying double geobase
+    , rrid integer   -- Right-side Road ID from accompanying double geobase
     , osm_id bigint
     , name varchar
     , geom geometry(linestring, 3857)
@@ -146,4 +156,28 @@ JOIN loc_with_idx loc2 using (osm_id)
 JOIN osm_ways w using (osm_id)
 WHERE loc2.idx = loc1.idx+1;
 
+CREATE FUNCTION update_road_r14id() RETURNS trigger AS $update_road_r14id$
+    BEGIN
+        IF (NEW.cid IS NOT NULL AND NEW.did IS NOT NULL AND NEW.rid IS NOT NULL) THEN
+            NEW.r13id := (
+                to_char(NEW.cid, 'fm000')         ||     -- City ID
+                to_char(NEW.did, 'fm0')           ||     -- District ID
+                to_char(NEW.rid, 'fm000000000')          -- Road ID
+            );
+            IF (NEW.sid IS NOT NULL) THEN
+                NEW.r14id := (
+                    NEW.r13id || to_char(NEW.sid, 'fm0')
+                );
+            ELSE
+                NEW.r14id := NULL;
+            END IF;
+        ELSE
+            NEW.r13id := NULL;
+        END IF;
+        RETURN NEW;
+    END;
+$update_road_r14id$ LANGUAGE plpgsql;
+
+CREATE TRIGGER road_r14id_trigger BEFORE INSERT OR UPDATE ON roads
+    FOR EACH ROW EXECUTE PROCEDURE update_road_r14id();
 """

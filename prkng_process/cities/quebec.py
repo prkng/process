@@ -23,7 +23,7 @@ CREATE TABLE quebec_bornes_raw (
     nom_topog varchar,
     isleft integer,
     geom geometry,
-    road_id integer,
+    r14id varchar,
     road_pos float
 )
 """
@@ -39,7 +39,7 @@ WITH bornes AS (
             ORDER BY levenshtein(b.nom_topog, r.name),
                 st_distance(b.geom, r.geom)
         ) AS rank,
-        r.id AS road_id,
+        r.r14id AS r14id,
         r.geom AS geom_road
     FROM quebec_bornes b
     JOIN roads r on r.geom && st_buffer(b.geom, 30)
@@ -49,7 +49,7 @@ WITH bornes AS (
     SELECT
         s.no_borne::int,
         s.nom_topog,
-        s.road_id,
+        s.r14id,
         s.geom_road,
         ST_isLeft(s.geom_road, s.geom) AS isleft,
         CASE WHEN (s.azi - radians(90.0) > 2*pi()) THEN
@@ -65,7 +65,7 @@ WITH bornes AS (
     SELECT
         s.no_borne::int,
         s.nom_topog,
-        s.road_id,
+        s.r14id,
         s.geom_road,
         ST_isLeft(s.geom_road, s.geom) AS isleft,
         CASE WHEN (s.azi + radians(90.0) > 2*pi()) THEN
@@ -78,13 +78,13 @@ WITH bornes AS (
     FROM bornes s
     WHERE s.rank = 1
 )
-INSERT INTO quebec_bornes_raw (no_borne, nom_topog, isleft, geom, road_id, road_pos)
+INSERT INTO quebec_bornes_raw (no_borne, nom_topog, isleft, geom, r14id, road_pos)
     SELECT
         s.no_borne::int,
         s.nom_topog,
         s.isleft,
         s.geom,
-        s.road_id,
+        s.r14id,
         st_line_locate_point(s.geom_road, s.geom)
     FROM bornes_proj s
 """
@@ -97,21 +97,21 @@ DECLARE
   id_match integer;
 BEGIN
   DROP TABLE IF EXISTS quebec_bornes_clustered;
-  CREATE TABLE quebec_bornes_clustered (id serial primary key, ids integer[], bornes integer[], geom geometry, way_name varchar, isleft integer, road_id integer);
+  CREATE TABLE quebec_bornes_clustered (id serial primary key, ids integer[], bornes integer[], geom geometry, way_name varchar, isleft integer, r14id varchar);
   DROP TABLE IF EXISTS quebec_paid_slots_raw;
-  CREATE TABLE quebec_paid_slots_raw (id serial primary key, road_id integer, bornes integer[], geom geometry, isleft integer);
+  CREATE TABLE quebec_paid_slots_raw (id serial primary key, r14id varchar, bornes integer[], geom geometry, isleft integer);
   CREATE INDEX ON quebec_paid_slots_raw USING GIST(geom);
 
-  FOR borne IN SELECT * FROM quebec_bornes_raw ORDER BY road_id, road_pos LOOP
+  FOR borne IN SELECT * FROM quebec_bornes_raw ORDER BY r14id, road_pos LOOP
     SELECT id FROM quebec_bornes_clustered
-      WHERE borne.road_id = quebec_bornes_clustered.road_id
+      WHERE borne.r14id = quebec_bornes_clustered.r14id
       AND borne.isleft = quebec_bornes_clustered.isleft
       AND ST_DWithin(borne.geom, quebec_bornes_clustered.geom, 10)
       LIMIT 1 INTO id_match;
 
     IF id_match IS NULL THEN
-      INSERT INTO quebec_bornes_clustered (ids, bornes, geom, way_name, isleft, road_id) VALUES
-        (ARRAY[borne.id], ARRAY[borne.no_borne], borne.geom, borne.nom_topog, borne.isleft, borne.road_id);
+      INSERT INTO quebec_bornes_clustered (ids, bornes, geom, way_name, isleft, r14id) VALUES
+        (ARRAY[borne.id], ARRAY[borne.no_borne], borne.geom, borne.nom_topog, borne.isleft, borne.r14id);
     ELSE
       UPDATE quebec_bornes_clustered SET geom = ST_MakeLine(borne.geom, geom),
         ids = uniq(sort(array_prepend(borne.id, ids))), bornes = uniq(sort(array_prepend(borne.no_borne, bornes)))
@@ -121,27 +121,23 @@ BEGIN
 
   WITH tmp_slots as (
     SELECT
-      road_id,
+      r14id,
       bornes,
       isleft,
       ST_Line_Locate_Point(r.geom, ST_StartPoint(qbc.geom)) AS start,
       ST_Line_Locate_Point(r.geom, ST_EndPoint(qbc.geom)) AS end
     FROM quebec_bornes_clustered qbc
-    JOIN roads r ON r.id = qbc.road_id
+    JOIN roads r ON r.r14id = qbc.r14id
   )
-  INSERT INTO quebec_paid_slots_raw (road_id, geom, bornes, isleft)
+  INSERT INTO quebec_paid_slots_raw (r14id, geom, bornes, isleft)
     SELECT
       r.id,
-      CASE
-          WHEN isleft = 1 then
-              ST_OffsetCurve(ST_Line_Substring(r.geom, LEAST(s.start, s.end), GREATEST(s.start, s.end)), {offset}, 'quad_segs=4 join=round')
-          ELSE
-              ST_OffsetCurve(ST_Line_Substring(r.geom, LEAST(s.start, s.end), GREATEST(s.start, s.end)), -{offset}, 'quad_segs=4 join=round')
-      END AS geom,
+      ST_OffsetCurve(ST_Line_Substring(r.geom, LEAST(s.start, s.end),
+            GREATEST(s.start, s.end)), (isleft * {offset}), 'quad_segs=4 join=round') AS geom,
       s.bornes,
       s.isleft
     FROM tmp_slots s
-    JOIN roads r ON r.id = s.road_id;
+    JOIN roads r ON r.r14id = s.r14id;
 END;
 $$ language plpgsql;
 """
@@ -175,48 +171,88 @@ ORDER BY id, gid
 """
 
 
+# try to match osm ways with geobase
+match_roads_geobase = """
+WITH tmp as (
+SELECT
+    o.*
+    , m.id AS id_voie_pu
+    , rank() over (
+        partition by o.id order by
+          ST_HausdorffDistance(o.geom, m.geom)
+          , levenshtein(o.name, m.nom_topo)
+          , abs(st_length(o.geom) - st_length(m.geom)) / greatest(st_length(o.geom), st_length(m.geom))
+      ) as rank
+FROM roads o
+JOIN quebec_geobase m on o.geom && st_expand(m.geom, 10)
+WHERE st_contains(st_buffer(m.geom, 30), o.geom)
+)
+UPDATE roads r
+    SET cid = 2,
+        did = 0,
+        rid = t.id_voie_pu
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
+
+-- invert buffer comparison to catch more ways
+WITH tmp as (
+SELECT
+    o.*
+    , m.id AS id_voie_pu
+    , rank() over (
+        partition by o.id order by
+            ST_HausdorffDistance(o.geom, m.geom)
+            , levenshtein(o.name, m.nom_topo)
+            , abs(st_length(o.geom) - st_length(m.geom)) / greatest(st_length(o.geom), st_length(m.geom))
+      ) as rank
+FROM roads o
+JOIN quebec_geobase m on o.geom && st_expand(m.geom, 10)
+WHERE st_contains(st_buffer(o.geom, 30), m.geom)
+  AND o.rid is NULL
+)
+UPDATE roads r
+    SET cid = 2,
+        did = 0,
+        rid = t.id_voie_pu
+    FROM tmp t
+    WHERE r.id   = t.id
+      AND t.rank = 1;
+
+UPDATE roads r
+    SET sid = g.rn
+    FROM (
+        SELECT x.id, ROW_NUMBER() OVER (PARTITION BY x.rid
+            ORDER BY ST_Distance(ST_StartPoint(x.geom), ST_StartPoint(ST_LineMerge(n.geom)))) AS rn
+        FROM roads x
+        JOIN quebec_geobase n ON n.id = x.rid
+        WHERE x.cid = 2
+    ) AS g
+    WHERE r.id = g.id AND g.rn < 10
+"""
+
+
 # creating signposts (aggregation of signs sharing the same lect_met attribute)
 create_signpost = """
 DROP TABLE IF EXISTS quebec_signpost_temp;
 CREATE TABLE quebec_signpost_temp (
     id serial PRIMARY KEY
-    , rid integer  -- road id from roads table
+    , r13id varchar
     , is_left integer
     , signs integer[]
     , geom geometry(Point, 3857)
 );
 
-WITH tmp as (
+INSERT INTO quebec_signpost_temp (r13id, is_left, signs, geom)
 SELECT
-    min(s.id) as id
-    , st_setsrid(st_makepoint(avg(st_x(s.geom)), avg(st_y(s.geom))), 3857) as geom
-    , min(p.nom_topog) as nom_topog
-    , array_agg(distinct s.id) as ids
+    min(r.r13id)
+    , min(st_isleft(r.geom, s.geom))
+    , array_agg(DISTINCT s.id)
+    , min(s.geom)
 FROM quebec_sign s
 JOIN quebec_panneau p on p.id = s.id
-GROUP BY lect_met, id_voie_pu, cote_rue
-), ranked as (
-select
-    r.id as rid
-    , t.geom
-    , ids
-    , st_distance(t.geom, r.geom) as dist
-    , r.geom as road_geom
-    , rank() over (
-        partition by t.id order by levenshtein(t.nom_topog, r.name), st_distance(t.geom, r.geom)
-        ) as rank
-  from tmp t
-  JOIN roads r on r.geom && st_buffer(t.geom, 30)
-)
-INSERT INTO quebec_signpost_temp
-SELECT
-    distinct on (dist, rank, ids)
-    row_number() over () as id
-    , rid
-    , st_isleft(road_geom, geom)
-    , ids
-    , geom
-FROM ranked WHERE rank = 1;
+JOIN roads r ON r.cid = 2 AND r.rid = p.id_voie_pu
+GROUP BY lect_met, id_voie_pu, cote_rue;
 
 -- aggregate posts within 7m on same side of same street, fixes many lect_met inaccuracies
 DO
@@ -226,18 +262,18 @@ DECLARE
   id_match integer;
 BEGIN
     DROP TABLE IF EXISTS quebec_signpost;
-    CREATE TABLE quebec_signpost (id serial PRIMARY KEY, rid integer, is_left integer, signs integer[], geom geometry(Point, 3857));
+    CREATE TABLE quebec_signpost (id serial PRIMARY KEY, r13id varchar, is_left integer, signs integer[], geom geometry(Point, 3857));
 
     FOR signpost IN SELECT * FROM quebec_signpost_temp LOOP
       SELECT id FROM quebec_signpost
-        WHERE signpost.rid = quebec_signpost.rid
+        WHERE signpost.r13id = quebec_signpost.r13id
           AND signpost.is_left = quebec_signpost.is_left
           AND ST_DWithin(signpost.geom, quebec_signpost.geom, 7)
         LIMIT 1 INTO id_match;
 
       IF id_match IS NULL THEN
-        INSERT INTO quebec_signpost (rid, is_left, signs, geom) VALUES
-          (signpost.rid, signpost.is_left, signpost.signs, signpost.geom);
+        INSERT INTO quebec_signpost (r13id, is_left, signs, geom) VALUES
+          (signpost.r13id, signpost.is_left, signpost.signs, signpost.geom);
       ELSE
         UPDATE quebec_signpost SET geom = ST_Line_Interpolate_Point(ST_MakeLine(signpost.geom, geom), 0.5),
           signs = signpost.signs || signs
@@ -256,11 +292,12 @@ DROP TABLE IF EXISTS quebec_signpost_onroad;
 CREATE TABLE quebec_signpost_onroad AS
     SELECT
         distinct on (sp.id) sp.id
-        , s.id as road_id
-        , st_closestpoint(s.geom, sp.geom)::geometry(point, 3857) as geom
-        , st_isleft(s.geom, sp.geom) as isleft
+        , r.r14id as r14id
+        , st_closestpoint(r.geom, sp.geom)::geometry(point, 3857) as geom
+        , st_isleft(r.geom, sp.geom) as isleft
     FROM quebec_signpost sp
-    JOIN roads s on s.id = sp.rid;
+    JOIN roads r USING (r13id)
+    ORDER BY sp.id, ST_Distance(r.geom, sp.geom);
 
 SELECT id from quebec_signpost_onroad group by id having count(*) > 1
 """
@@ -304,7 +341,7 @@ DROP TABLE IF EXISTS quebec_slots_likely;
 CREATE TABLE quebec_slots_likely(
     id serial
     , signposts integer[]
-    , rid integer  -- road id
+    , r14id varchar  -- road id
     , position float
     , geom geometry(linestring, 3857)
 );
@@ -313,49 +350,48 @@ CREATE TABLE quebec_slots_likely(
 insert_slots_likely = """
 WITH selected_roads AS (
     SELECT
-        r.id as rid
+        r.r14id as r14id
         , r.geom as rgeom
         , p.id as pid
         , p.geom as pgeom
     FROM roads r, quebec_signpost_onroad p
-    where r.geom && p.geom
-        AND r.id = p.road_id
-        AND p.isleft = {isleft}
+    WHERE r.r14id  = p.r14id
+      AND p.isleft = {isleft}
 ), point_list AS (
     SELECT
-        distinct rid
+        distinct r14id
         , 0 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        distinct rid
+        distinct r14id
         , 1 as position
         , 0 as signpost
     FROM selected_roads
 UNION ALL
     SELECT
-        rid
+        r14id
         , st_line_locate_point(rgeom, pgeom) as position
         , pid as signpost
     FROM selected_roads
 ), loc_with_idx as (
     SELECT
-        rid
+        r14id
         , position
-        , rank() over (partition by rid order by position) as idx
+        , rank() over (partition by r14id order by position) as idx
         , signpost
     FROM point_list
 )
-INSERT INTO quebec_slots_likely (signposts, rid, position, geom)
+INSERT INTO quebec_slots_likely (signposts, r14id, position, geom)
 SELECT
     ARRAY[loc1.signpost, loc2.signpost]
-    , w.id
+    , r.r14id
     , loc1.position as position
-    , st_line_substring(w.geom, loc1.position, loc2.position) as geom
+    , st_line_substring(r.geom, loc1.position, loc2.position) as geom
 FROM loc_with_idx loc1
-JOIN loc_with_idx loc2 using (rid)
-JOIN roads w on w.id = loc1.rid
+JOIN loc_with_idx loc2 using (r14id)
+JOIN roads r on r.r14id = loc1.r14id
 WHERE loc2.idx = loc1.idx+1;
 """
 
@@ -403,16 +439,16 @@ WITH tmp AS (
         , s.code
         , s.description
         , s.direction
-        , spo.road_id
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM quebec_slots_likely sl
     JOIN quebec_sign s on ARRAY[s.signpost] <@ sl.signposts
     JOIN quebec_signpost_onroad spo on s.signpost = spo.id
     JOIN quebec_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN roads rb on spo.road_id = rb.id
+    JOIN roads rb ON spo.r14id = rb.r14id
 
 
     UNION ALL
@@ -422,21 +458,18 @@ WITH tmp AS (
         , s.code
         , s.description
         , s.direction
-        , spo.road_id
         , spo.isleft
         , rb.name
+        , (rb.r14id || (CASE WHEN spo.isleft = 1 THEN 0 ELSE 1 END)) AS r15id
     FROM quebec_slots_likely sl
     JOIN quebec_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN quebec_signpost_onroad spo on s.signpost = spo.id
-    JOIN roads rb on spo.road_id = rb.id
-
-),
-selection as (
+    JOIN roads rb ON spo.r14id = rb.r14id
+), selection as (
 SELECT
     distinct on (t.id) t.id
     , min(signposts) as signposts
-    , min(isleft) as isleft
-    , min(road_id) as rid
+    , min(r15id) as r15id
     , min(position) as position
     , min(name) as way_name
     , array_to_json(
@@ -454,18 +487,14 @@ SELECT
             'permit_no', r.permit_no
         )::jsonb
     ))::jsonb as rules
-    , CASE
-        WHEN min(isleft) = 1 then
-            ST_OffsetCurve(min(t.geom), {offset}, 'quad_segs=4 join=round')
-        ELSE
-            ST_OffsetCurve(min(t.geom), -{offset}, 'quad_segs=4 join=round')
-      END as geom
+    , ST_OffsetCurve(min(t.geom), (min(isleft) * {offset}),
+            'quad_segs=4 join=round') as geom
 FROM tmp t
 JOIN rules r on t.code = r.code
 GROUP BY t.id
-) INSERT INTO quebec_slots_temp (rid, position, signposts, rules, geom, way_name)
+) INSERT INTO quebec_slots_temp (r15id, position, signposts, rules, geom, way_name)
 SELECT
-    rid
+    r15id
     , position
     , signposts
     , rules
@@ -478,20 +507,20 @@ WHERE st_geometrytype(geom) = 'ST_LineString' -- skip curious rings
 overlay_paid_rules = """
 WITH segments AS (
     SELECT
-        id, rid, rgeom, ST_Intersection(geom, exclude) AS geom_paid, ST_Difference(geom, exclude) AS geom_normal,
+        id, r14id, rgeom, ST_Intersection(geom, exclude) AS geom_paid, ST_Difference(geom, exclude) AS geom_normal,
         exclude, signposts, way_name, orig_rules, array_agg(rules) AS rules
     FROM (
         SELECT
-            s.id, r.id AS rid, r.geom AS rgeom, s.geom, s.signposts, s.way_name, s.rules AS orig_rules,
+            s.id, r.r14id AS r14id, r.geom AS rgeom, s.geom, s.signposts, s.way_name, s.rules AS orig_rules,
             jsonb_array_elements(s.rules) AS rules,
             ST_Union(ST_Buffer(qps.geom, 1, 'endcap=flat join=round')) AS exclude
         FROM quebec_slots_temp s
         JOIN quebec_paid_slots_raw qps ON ST_Intersects(s.geom, ST_Buffer(qps.geom, 1, 'endcap=flat join=round'))
-        JOIN roads r ON r.id = qps.road_id AND s.way_name = r.name
+        JOIN roads r ON r.r14id = qps.r14id AND s.way_name = r.name
         GROUP BY s.id, r.id, r.geom
     ) AS foo
     WHERE ST_Length(ST_Intersection(geom, exclude)) >= 4
-    GROUP BY id, rid, rgeom, geom, exclude, signposts, way_name, orig_rules
+    GROUP BY id, r14id, rgeom, geom, exclude, signposts, way_name, orig_rules
     ORDER BY id
 ), update_normal AS (
     DELETE FROM quebec_slots_temp
@@ -500,7 +529,7 @@ WITH segments AS (
 ), new_slots AS (
     SELECT
         g.signposts,
-        g.rid,
+        g.r14id,
         g.rgeom,
         g.way_name,
         array_to_json(array_append(g.rules,
@@ -528,7 +557,7 @@ WITH segments AS (
     UNION
     SELECT
         g.signposts,
-        g.rid,
+        g.r14id,
         g.rgeom,
         g.way_name,
         g.orig_rules AS rules,
@@ -540,10 +569,10 @@ WITH segments AS (
         END AS geom
     FROM segments g
 )
-INSERT INTO quebec_slots_temp (signposts, rid, position, rules, way_name, geom)
+INSERT INTO quebec_slots_temp (signposts, r14id, position, rules, way_name, geom)
     SELECT
         nn.signposts,
-        nn.rid,
+        nn.r14id,
         st_line_locate_point(nn.rgeom, st_startpoint(nn.geom)),
         nn.rules,
         nn.way_name,
@@ -555,22 +584,22 @@ INSERT INTO quebec_slots_temp (signposts, rid, position, rules, way_name, geom)
 create_paid_slots_standalone = """
 WITH exclusions AS (
     SELECT
-        id, rid, rgeom, way_name, ST_Union(exclude) AS exclude
+        id, r14id, rgeom, way_name, ST_Union(exclude) AS exclude
     FROM (
         SELECT
             qps.id,
-            r.id AS rid,
+            r.r14id AS r14id,
             r.name AS way_name,
             r.geom AS rgeom,
             ST_Buffer(s.geom, 1, 'endcap=flat join=round') AS exclude
         FROM quebec_paid_slots_raw qps
         JOIN quebec_slots_temp s ON ST_Intersects(s.geom, ST_Buffer(qps.geom, 1, 'endcap=flat join=round'))
-        JOIN roads r ON r.id = qps.road_id AND s.way_name = r.name
+        JOIN roads r ON r.r14id = qps.r14id AND s.way_name = r.name
     ) AS foo
-    GROUP BY id, rid, rgeom, way_name
+    GROUP BY id, r14id, rgeom, way_name
 ), update_raw AS (
     SELECT
-        ex.rid,
+        ex.r14id,
         ex.rgeom,
         ex.way_name,
         ST_Difference(qps.geom, ex.exclude) AS geom
@@ -578,16 +607,16 @@ WITH exclusions AS (
     JOIN exclusions ex ON ex.id = qps.id
     UNION
     SELECT
-        r.id AS rid,
+        r.r14id AS r14id,
         r.geom AS rgeom,
         r.name,
         qps.geom
     FROM quebec_paid_slots_raw qps
-    JOIN roads r ON r.id = qps.road_id
+    JOIN roads r ON r.r14id = qps.r14id
     WHERE qps.id NOT IN (SELECT id FROM exclusions)
 ), new_paid AS (
     SELECT
-        ur.rid,
+        ur.r14id,
         ur.way_name,
         ur.rgeom,
         array_to_json(
@@ -613,10 +642,10 @@ WITH exclusions AS (
     FROM update_raw ur
     JOIN rules z ON z.code = 'QCPAID'
 )
-INSERT INTO quebec_slots_temp (signposts, rid, position, rules, way_name, geom)
+INSERT INTO quebec_slots_temp (signposts, r14id, position, rules, way_name, geom)
     SELECT
         ARRAY[0,0],
-        nn.rid,
+        nn.r14id,
         st_line_locate_point(nn.rgeom, st_startpoint(nn.geom)),
         nn.rules,
         nn.way_name,
@@ -644,7 +673,7 @@ CREATE TABLE quebec_slots_debug as
     JOIN quebec_nextpoints np on np.slot_id = sl.id AND
                           s.signpost = np.id AND
                           s.direction = np.direction
-    JOIN roads rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 
     UNION ALL
     -- both direction from signpost
@@ -658,7 +687,7 @@ CREATE TABLE quebec_slots_debug as
     FROM quebec_slots_likely sl
     JOIN quebec_sign s on ARRAY[s.signpost] <@ sl.signposts and direction = 0
     JOIN quebec_signpost_onroad spo on s.signpost = spo.id
-    JOIN roads rb on spo.road_id = rb.id
+    JOIN roads rb on spo.r14id = rb.r14id
 ), staging as (
 SELECT
     distinct on (t.id, t.code)
@@ -686,12 +715,7 @@ SELECT
     , rt.special_days
     , rt.restrict_types
     , r.agenda::text as agenda
-    , CASE
-        WHEN isleft = 1 then
-            ST_OffsetCurve(t.geom, {offset}, 'quad_segs=4 join=round')
-        ELSE
-            ST_OffsetCurve(t.geom, -{offset}, 'quad_segs=4 join=round')
-      END as geom
+    , ST_OffsetCurve(t.geom, (isleft * {offset}), 'quad_segs=4 join=round') as geom
 FROM tmp t
 JOIN rules r on t.code = r.code
 JOIN quebec_rules_translation rt on rt.code = r.code
