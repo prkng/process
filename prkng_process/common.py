@@ -157,7 +157,7 @@ CREATE TABLE parking_lots
 (
   id serial PRIMARY KEY,
   active boolean,
-  partner_id integer,
+  partner_id varchar,
   partner_name varchar,
   city varchar,
   name varchar,
