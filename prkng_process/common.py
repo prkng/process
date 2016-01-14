@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS slots
   way_name varchar,
   geom geometry(LineString,3857),
   geojson jsonb,
+  centerpoint jsonb,
   button_locations jsonb
 )
 """

@@ -35,12 +35,19 @@ class Montreal(DataSource):
 
         self.resources = (
             'Ahuntsic-Cartierville',
+            'Anjou',
             'Côte-des-Neiges-Notre-Dame-de-Grâce',
+            'Lachine',
+            'Lasalle',
             'Mercier-Hochelaga-Maisonneuve',
+            'Montréal-Nord',
             'Outremont',
+            'Pierrefonds-Roxboro',
             'Plateau-Mont-Royal',
+            'Rivière-des-Prairies-Pointe-aux-Trembles',
             'Rosemont-La Petite-Patrie',
             'Saint-Laurent',
+            'Saint-Léonard',
             'Le Sud-Ouest',
             'Ville-Marie',
             'Villeray-Saint-Michel-Parc-Extension',
@@ -48,7 +55,6 @@ class Montreal(DataSource):
         )
 
         self.jsonfiles = []
-        self.paid_zone_shapefile = script('paid_montreal_zones.kml')
 
     def download(self):
         self.download_signs()

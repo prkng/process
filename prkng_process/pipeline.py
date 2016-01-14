@@ -190,6 +190,7 @@ def process_montreal(debug=False):
     db.vacuum_analyze('public', 'montreal_nextpoints')
 
     db.create_index('montreal_slots_temp', 'id')
+    db.create_index('montreal_slots_temp', 'r15id')
     db.create_index('montreal_slots_temp', 'geom', index_type='gist')
     db.create_index('montreal_slots_temp', 'rules', index_type='gin')
     db.query(mrl.insert_slots_temp.format(offset=LINE_OFFSET))
@@ -512,6 +513,7 @@ def run(cities=CITIES, osm=False, debug=False):
     Logger.info("Aggregating like slots")
     for x in cities:
         db.create_index(x+'_slots', 'id')
+        db.create_index(x+'_slots', 'r15id')
         db.create_index(x+'_slots', 'geom', index_type='gist')
         db.create_index(x+'_slots', 'rules', index_type='gin')
         db.query(common.aggregate_like_slots.format(city=x))
