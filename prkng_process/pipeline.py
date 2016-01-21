@@ -134,6 +134,8 @@ def process_montreal(debug=False):
 
     info("Loading signs")
     db.query(mrl.insert_sign)
+    db.query(mrl.insert_signpost_verdun)
+    db.query(mrl.insert_sign_verdun)
     db.create_index('montreal_sign', 'geom', index_type='gist')
     db.create_index('montreal_sign', 'direction')
     db.create_index('montreal_sign', 'elevation')

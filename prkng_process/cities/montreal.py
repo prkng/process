@@ -1,6 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+# insert virtual signposts for verdun/île-des-soeurs
+insert_signpost_verdun = """
+INSERT INTO montreal_poteaux (poteau_id_pot, geom, description_rep, trc_id)
+    SELECT
+        (900000 + ROW_NUMBER() OVER (ORDER BY d.id)),
+        ST_Line_Interpolate_Point(ST_LineMerge(g.geom), 0.5),
+        'Réel',
+        g.id_trc
+    FROM montreal_data_verdun d
+    JOIN montreal_geobase_double g ON g.id_trc = ANY(('{' || d.id_trc || '}')::int[])
+    WHERE ST_GeometryType(ST_LineMerge(g.geom)) = 'ST_LineString'
+"""
 
 # create table hosting all signs
 create_sign = """
@@ -55,6 +67,57 @@ WHERE
     AND p.code_rpa <> 'RD-TT' -- don't match 'debarcaderes'
     AND substring(p.description_rpa, '.*\((flexible)\).*') is NULL
     AND p.fleche_pan in (0, 2, 3, 8)
+"""
+
+# insert virtual signs for verdun/île-des-soeurs
+insert_sign_verdun = """
+WITH tmp AS (
+    SELECT
+        pt.poteau_id_pot
+        , pt.geom
+        , ARRAY[d.rule_pair_1, d.rule_pair_2]::varchar[] AS rules
+    FROM montreal_data_verdun d
+    JOIN montreal_roads_geobase r ON r.id_trc = ANY(('{' || d.id_trc || '}')::int[])
+    JOIN montreal_geobase_double g ON g.cote_rue_i = ANY(('{' || d.id_trc_pair || '}')::int[])
+    JOIN montreal_poteaux pt ON r.id_trc::text = pt.trc_id
+    WHERE pt.poteau_id_pot >= 900000
+        AND ST_GeometryType(ST_LineMerge(g.geom)) = 'ST_LineString'
+        AND ST_isLeft(r.geom, pt.geom) = ST_isLeft(r.geom,
+            ST_Line_Interpolate_Point(ST_LineMerge(g.geom), 0.5))
+    UNION ALL
+    SELECT
+        pt.poteau_id_pot
+        , pt.geom
+        , ARRAY[d.rule_impair_1, d.rule_impair_2]::varchar[] AS rules
+    FROM montreal_data_verdun d
+    JOIN montreal_roads_geobase r ON r.id_trc = ANY(('{' || d.id_trc || '}')::int[])
+    JOIN montreal_geobase_double g ON g.cote_rue_i = ANY(('{' || d.id_trc_impair || '}')::int[])
+    JOIN montreal_poteaux pt ON r.id_trc::text = pt.trc_id
+    WHERE pt.poteau_id_pot >= 900000
+        AND ST_GeometryType(ST_LineMerge(g.geom)) = 'ST_LineString'
+        AND ST_isLeft(r.geom, pt.geom) = ST_isLeft(r.geom,
+            ST_Line_Interpolate_Point(ST_LineMerge(g.geom), 0.5))
+)
+INSERT INTO montreal_sign
+(
+    sid
+    , geom
+    , direction
+    , signpost
+    , elevation
+    , code
+    , description
+)
+SELECT
+    (9000000 + ROW_NUMBER() OVER(ORDER BY poteau_id_pot)),
+    geom,
+    0,
+    poteau_id_pot,
+    0,
+    code,
+    description
+FROM tmp
+JOIN rules ON code = ANY(rules)
 """
 
 # create signpost table

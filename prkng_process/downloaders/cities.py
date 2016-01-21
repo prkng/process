@@ -35,14 +35,14 @@ class Montreal(DataSource):
 
         self.resources = (
             'Ahuntsic-Cartierville',
-            'Anjou',
+            #'Anjou',
             'Côte-des-Neiges-Notre-Dame-de-Grâce',
             'Lachine',
-            'Lasalle',
+            #'Lasalle',
             'Mercier-Hochelaga-Maisonneuve',
-            'Montréal-Nord',
+            #'Montréal-Nord',
             'Outremont',
-            'Pierrefonds-Roxboro',
+            #'Pierrefonds-Roxboro',
             'Plateau-Mont-Royal',
             'Rivière-des-Prairies-Pointe-aux-Trembles',
             'Rosemont-La Petite-Patrie',
@@ -70,7 +70,7 @@ class Montreal(DataSource):
         url = ''
 
         for res in json['result']['resources']:
-            if res['name'].lower() == 'géobase' and res['format'] == 'shp':
+            if res['name'].lower() == 'géobase' and res['format'].lower() == 'shp':
                 url = res['url']
 
         Logger.info("Downloading Montreal Géobase")
@@ -96,7 +96,7 @@ class Montreal(DataSource):
         url = ''
 
         for res in json['result']['resources']:
-            if res['name'].lower() == 'geobase double' and res['format'] == 'shp':
+            if res['name'].lower() == 'geobase double' and res['format'].lower() == 'shp':
                 url = res['url']
 
         Logger.info("Downloading Montreal Géobase-Double")
@@ -201,6 +201,10 @@ class Montreal(DataSource):
         with open(script('montreal_load_panneau_descr.sql'), 'rb') as infile:
             self.db.query(infile.read().format(description_panneau=self.csvfile))
             self.db.vacuum_analyze("public", "montreal_descr_panneau")
+
+        with open(script('verdun_load_data.sql'), 'rb') as infile:
+            self.db.query(infile.read().format(script("data_verdun.csv")))
+            self.db.vacuum_analyze("public", "montreal_data_verdun")
 
     def load_rules(self):
         """
