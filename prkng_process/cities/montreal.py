@@ -79,7 +79,7 @@ WITH tmp AS (
     FROM montreal_data_verdun d
     JOIN montreal_roads_geobase r ON r.id_trc = ANY(('{' || d.id_trc || '}')::int[])
     JOIN montreal_geobase_double g ON g.cote_rue_i = ANY(('{' || d.id_trc_pair || '}')::int[])
-    JOIN montreal_poteaux pt ON r.id_trc::text = pt.trc_id
+    JOIN montreal_poteaux pt ON r.id_trc = pt.trc_id
     WHERE pt.poteau_id_pot >= 900000
         AND ST_GeometryType(ST_LineMerge(g.geom)) = 'ST_LineString'
         AND ST_isLeft(r.geom, pt.geom) = ST_isLeft(r.geom,
@@ -92,7 +92,7 @@ WITH tmp AS (
     FROM montreal_data_verdun d
     JOIN montreal_roads_geobase r ON r.id_trc = ANY(('{' || d.id_trc || '}')::int[])
     JOIN montreal_geobase_double g ON g.cote_rue_i = ANY(('{' || d.id_trc_impair || '}')::int[])
-    JOIN montreal_poteaux pt ON r.id_trc::text = pt.trc_id
+    JOIN montreal_poteaux pt ON r.id_trc = pt.trc_id
     WHERE pt.poteau_id_pot >= 900000
         AND ST_GeometryType(ST_LineMerge(g.geom)) = 'ST_LineString'
         AND ST_isLeft(r.geom, pt.geom) = ST_isLeft(r.geom,

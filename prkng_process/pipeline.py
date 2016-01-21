@@ -129,6 +129,15 @@ def process_montreal(debug=False):
     insert_rules('montreal_rules_translation')
     db.vacuum_analyze('public', 'rules')
 
+    info("Matching osm roads with geobase")
+    db.query(mrl.match_roads_geobase)
+    db.create_index('montreal_roads_geobase', 'id')
+    db.create_index('montreal_roads_geobase', 'id_trc')
+    db.create_index('montreal_roads_geobase', 'osm_id')
+    db.create_index('montreal_roads_geobase', 'name')
+    db.create_index('montreal_roads_geobase', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'montreal_roads_geobase')
+
     info("Creating sign table")
     db.query(mrl.create_sign)
 
@@ -148,15 +157,6 @@ def process_montreal(debug=False):
     db.create_index('montreal_signpost', 'geom', index_type='gist')
     db.create_index('montreal_signpost', 'geobase_id')
     db.vacuum_analyze('public', 'montreal_signpost')
-
-    info("Matching osm roads with geobase")
-    db.query(mrl.match_roads_geobase)
-    db.create_index('montreal_roads_geobase', 'id')
-    db.create_index('montreal_roads_geobase', 'id_trc')
-    db.create_index('montreal_roads_geobase', 'osm_id')
-    db.create_index('montreal_roads_geobase', 'name')
-    db.create_index('montreal_roads_geobase', 'geom', index_type='gist')
-    db.vacuum_analyze('public', 'montreal_roads_geobase')
 
     info("Projecting signposts on road")
     duplicates = db.query(mrl.project_signposts)
