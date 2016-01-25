@@ -435,7 +435,7 @@ class NewYork(DataSource):
         self.db.vacuum_analyze("public", "newyork_signs_raw")
 
         subprocess.check_call(
-            'shp2pgsql -d -g geom -t 2D -s 2263:3857 -W LATIN1 -I {filename} newyork_geobase | '
+            'shp2pgsql -d -g geom -t 2D -s 4326:3857 -W LATIN1 -I {filename} newyork_geobase | '
             'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
             .format(filename=self.road_shapefile, **CONFIG),
             shell=True
