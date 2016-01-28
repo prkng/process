@@ -10,7 +10,7 @@ CREATE TABLE seattle_sign (
     , sid varchar NOT NULL
     , geom geometry(Point, 3857)
     , segkey integer
-    , distance integer
+    , distance float
     , facing varchar
     , direction smallint -- direction the rule applies
     , code varchar -- code of rule
@@ -53,7 +53,7 @@ WITH tmp AS (
     SELECT
         *,
         (CASE WHEN substring(customtext, '.*THIS SPACE.*') IS NOT NULL THEN 6
-         ELSE substring(fieldnotes, '([0-9]+\.*[0-9]*)\\''')::int * 0.3048
+         ELSE substring(fieldnotes, '([0-9]+\.*[0-9]*)\\''')::float * 0.3048
         END) AS offset, -- feet to metres
         (CASE WHEN facing = 'N'  THEN radians(0)
               WHEN facing = 'NE' THEN radians(45)

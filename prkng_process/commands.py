@@ -20,7 +20,7 @@ def export():
     """
     Export processed data tables to file
     """
-    tables = ["montreal_slots", "quebec_slots", "newyork_slots", "seattle_slots", "cities", "city_assets", "parking_lots", "rules"]
+    tables = ["montreal_slots", "quebec_slots", "newyork_slots", "seattle_slots", "cities", "city_assets", "parking_lots", "rules", "permits"]
 
     Logger.info('Exporting processed tables...')
     export_dir = os.path.join(os.path.dirname(os.environ["PRKNG_SETTINGS"]), 'export')
