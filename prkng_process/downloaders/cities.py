@@ -725,7 +725,7 @@ class Seattle(DataSource):
     def _dynrule(x, per, start, end, count):
         insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
         code, agenda = "SEA-PAID-{}-{}".format((x[0], count)), {str(y): [] for y in range(1,8)}
-        if per = "MON-FRI":
+        if per == "MON-FRI":
             for y in range(1,6):
                 agenda[str(y)].append([float(start) / 60.0, round(float(end) / 60.0)])
         else:
