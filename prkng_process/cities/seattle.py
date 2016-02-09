@@ -7,7 +7,7 @@ create_sign = """
 DROP TABLE IF EXISTS seattle_sign;
 CREATE TABLE seattle_sign (
     id serial PRIMARY KEY
-    , sid varchar NOT NULL
+    , sid varchar
     , geom geometry(Point, 3857)
     , segkey integer
     , distance float
@@ -19,88 +19,251 @@ CREATE TABLE seattle_sign (
 )
 """
 
-
-# insert seattle signs
+# insert seattle signs based on curblines dataset
+#  - creates signs that point to each other on each end of the curbline
+#     (gets proper facing by analyzing direction of the azimuth of the curbline direction)
+#  - ranks blockface line to associate with curbline via "closest within one metre"
+#  - ranks nearest real sign to curbline with the same type to get proper rules for that section
+#  - for 'unrestricted' curblines on 'unrestricted' blockfaces, insert a dummy rule so a slot
+#     can still be drawn
 insert_sign = """
+WITH tmp AS (
+    SELECT c.objectid, p.unitid, l.elmntkey, l.segkey, ST_LineMerge(c.geom) AS curb_geom,
+        ROW_NUMBER() OVER (PARTITION BY c.objectid ORDER BY ST_Distance(p.geom, ST_StartPoint(ST_LineMerge(c.geom)))) AS rank_sign,
+        RANK() OVER (PARTITION BY c.objectid ORDER BY ST_Distance(l.geom, c.geom)) AS rank_parkline,
+        r.code, r.description
+    FROM seattle_curblines c
+    JOIN seattle_parklines l ON c.side = l.side AND ST_DWithin(c.geom, l.geom, 1)
+    JOIN seattle_signs_raw p ON l.segkey = p.segkey AND (
+        (c.spacetype = ANY(ARRAY['XW', 'XWAREA', 'NP', 'TAZ']) AND p.category = ANY(ARRAY['PNP', 'PNS'])) OR
+        (c.spacetype = ANY(ARRAY['BUS', 'BUSLAY']) AND p.category = ANY(ARRAY['PBZ', 'PBLO'])) OR
+        (c.spacetype = ANY(ARRAY['TL', 'TL-PKA', 'TL-PKP']) AND p.category = 'PTIML') OR
+        (left(c.spacetype, 2) = 'CV' AND p.category = 'PCVL') OR
+        (c.spacetype LIKE '%PLZ%' AND p.category = ANY(ARRAY['PPL', 'PLU'])) OR
+        (c.spacetype = ANY(ARRAY['L/UL', 'TL-LUL']) AND p.category = ANY(ARRAY['PPL', 'PLU'])) OR
+        (c.spacetype LIKE '%RPZ%' AND p.category = 'PRZ') OR
+        (c.spacetype = 'UNR' AND p.category = ANY(ARRAY['PRZ', 'PTIML'])) OR
+        (c.spacetype = ANY(ARRAY['PS-TAX', 'CV-TAX', 'TAXI', 'CHRTR', 'CZ']) AND p.category = 'PZONE') OR
+        (c.spacetype = 'DISABL' AND p.category = 'PDIS') OR
+        (c.spacetype = ANY(ARRAY['SFD', 'LEVO']) AND p.category = 'PGA')
+    )
+    JOIN seattle_sign_codes x ON p.unitid = ANY(x.signs) -- only keep those existing in rules
+    JOIN rules r ON r.code = x.code
+    WHERE c.current_status = 'INSVC'
+), tall AS (
+    (SELECT c.objectid, c.objectid::text AS unitid, l.elmntkey, l.segkey, ST_LineMerge(c.geom) AS curb_geom,
+        1 AS rank_sign, RANK() OVER (PARTITION BY c.objectid ORDER BY ST_Distance(l.geom, c.geom)) AS rank_parkline,
+        r.code, r.description
+    FROM seattle_curblines c
+    JOIN seattle_parklines l ON c.side = l.side AND ST_DWithin(c.geom, l.geom, 1)
+    JOIN rules r ON r.code = 'SEA-PRM'
+    LEFT JOIN tmp x ON x.objectid = c.objectid
+    WHERE x.objectid IS NULL AND c.spacetype = 'UNR' AND c.current_status = 'INSVC'
+        AND l.parking_category = 'Unrestricted Parking')
+    UNION ALL
+    (SELECT * FROM tmp)
+)
 INSERT INTO seattle_sign
 (
     sid
     , geom
     , segkey
-    , distance
     , facing
+    , distance
     , code
     , description
 )
-SELECT
-    DISTINCT ON (p.unitid)
-    p.unitid
-    , p.geom
-    , p.segkey
-    , p.distance
-    , p.facing
-    , r.code
-    , r.description
-FROM seattle_signs_raw p
-JOIN seattle_sign_codes c ON p.unitid = ANY(c.signs) -- only keep those existing in rules
-JOIN rules r ON r.code = c.code
-ORDER BY p.unitid
+(SELECT
+    DISTINCT ON (t.objectid)
+    t.unitid
+    , ST_StartPoint(t.curb_geom)
+    , t.segkey
+    , (CASE
+        WHEN degrees(ST_Azimuth(ST_StartPoint(t.curb_geom), ST_EndPoint(t.curb_geom))) BETWEEN 45  AND 135 THEN 'E'
+        WHEN degrees(ST_Azimuth(ST_StartPoint(t.curb_geom), ST_EndPoint(t.curb_geom))) BETWEEN 225 AND 315 THEN 'W'
+        WHEN degrees(ST_Azimuth(ST_StartPoint(t.curb_geom), ST_EndPoint(t.curb_geom))) BETWEEN 145 AND 225 THEN 'S'
+        ELSE 'N'
+      END)
+    , round(ST_Distance(ST_StartPoint(g.geom), ST_StartPoint(t.curb_geom)))
+    , t.code
+    , t.description
+FROM tall t
+JOIN seattle_roads_geobase g ON t.segkey = g.compkey
+WHERE t.rank_sign = 1 AND t.rank_parkline = 1
+ORDER BY t.objectid)
+UNION ALL
+(SELECT
+    DISTINCT ON (t.objectid)
+    t.unitid
+    , ST_EndPoint(t.curb_geom)
+    , t.segkey
+    , (CASE
+        WHEN degrees(ST_Azimuth(ST_EndPoint(t.curb_geom), ST_StartPoint(t.curb_geom))) BETWEEN 45  AND 135 THEN 'E'
+        WHEN degrees(ST_Azimuth(ST_EndPoint(t.curb_geom), ST_StartPoint(t.curb_geom))) BETWEEN 225 AND 315 THEN 'W'
+        WHEN degrees(ST_Azimuth(ST_EndPoint(t.curb_geom), ST_StartPoint(t.curb_geom))) BETWEEN 145 AND 225 THEN 'S'
+        ELSE 'N'
+      END)
+    , round(ST_Distance(ST_StartPoint(g.geom), ST_EndPoint(t.curb_geom)))
+    , t.code
+    , t.description
+FROM tall t
+JOIN seattle_roads_geobase g ON t.segkey = g.compkey
+WHERE t.rank_sign = 1 AND t.rank_parkline = 1
+ORDER BY t.objectid)
 """
 
 
-insert_virtual_signs = """
+# insert seattle signs based on curblines dataset (paid)
+#  - creates signs that point to each other on each end of the curbline, like above
+#  - ranks blockface line to associate with curbline via "closest within one metre"
+#  - insert and join the dynamic paid parking rule created and registered during download process
+insert_sign_paid = """
 WITH tmp AS (
-    SELECT
-        *,
-        (CASE WHEN substring(customtext, '.*THIS SPACE.*') IS NOT NULL THEN 6
-         ELSE substring(fieldnotes, '([0-9]+\.*[0-9]*)\\''')::float * 0.3048
-        END) AS offset, -- feet to metres
-        (CASE WHEN facing = 'N'  THEN radians(0)
-              WHEN facing = 'NE' THEN radians(45)
-              WHEN facing = 'E'  THEN radians(90)
-              WHEN facing = 'SE' THEN radians(135)
-              WHEN facing = 'S'  THEN radians(180)
-              WHEN facing = 'SW' THEN radians(225)
-              WHEN facing = 'W'  THEN radians(270)
-              WHEN facing = 'NW' THEN radians(315)
-        END) AS azimuth,
-        (CASE WHEN facing = 'N'  THEN 'S'
-              WHEN facing = 'NE' THEN 'SW'
-              WHEN facing = 'E'  THEN 'W'
-              WHEN facing = 'SE' THEN 'NW'
-              WHEN facing = 'S'  THEN 'N'
-              WHEN facing = 'SW' THEN 'NE'
-              WHEN facing = 'W'  THEN 'E'
-              WHEN facing = 'NW' THEN 'SE'
-        END) AS new_facing
-    FROM seattle_signs_raw
-    WHERE facing IS NOT NULL
-        AND (substring(customtext, '.*THIS SPACE.*') IS NOT NULL
-            OR substring(fieldnotes, '([0-9]+\.*[0-9]*\\'')') IS NOT NULL)
+    SELECT c.objectid, l.elmntkey, l.segkey, ST_LineMerge(c.geom) AS curb_geom,
+        degrees(ST_Azimuth(ST_StartPoint(ST_LineMerge(c.geom)), ST_EndPoint(ST_LineMerge(c.geom)))) AS azimuth1,
+        degrees(ST_Azimuth(ST_EndPoint(ST_LineMerge(c.geom)), ST_StartPoint(ST_LineMerge(c.geom)))) AS azimuth2,
+        ROW_NUMBER() OVER (PARTITION BY c.objectid ORDER BY ST_Distance(l.geom, c.geom)) AS rank
+    FROM seattle_curblines c
+    JOIN seattle_parklines l ON c.side = l.side AND ST_DWithin(c.geom, l.geom, 1)
+    WHERE c.current_status = 'INSVC' AND c.spacetype = ANY(ARRAY['PS', 'PS-RPZ', 'PS-SCH'])
 )
 INSERT INTO seattle_sign
 (
     sid
     , geom
     , segkey
-    , distance
     , facing
+    , distance
     , code
     , description
 )
-SELECT
-    DISTINCT ON (p.unitid)
-    p.unitid
-    , ST_Transform(ST_Project(ST_Transform(p.geom, 4326)::geography, p.offset, p.azimuth)::geometry, 3857)
-    , p.segkey
-    , (p.distance + p.offset + 0.98765) -- random distance to be relatively sure of uniqueness
-    , p.new_facing
+(SELECT
+    DISTINCT ON (t.objectid, r.code)
+    t.objectid
+    , ST_StartPoint(t.curb_geom)
+    , t.segkey
+    , (CASE
+        WHEN t.azimuth1 BETWEEN 45  AND 135 THEN 'E'
+        WHEN t.azimuth1 BETWEEN 225 AND 315 THEN 'W'
+        WHEN t.azimuth1 BETWEEN 145 AND 225 THEN 'S'
+        ELSE 'N'
+      END)
+    , round(ST_Distance(ST_StartPoint(g.geom), ST_StartPoint(t.curb_geom)))
     , r.code
     , r.description
-FROM tmp p
-JOIN seattle_sign_codes c ON p.unitid = ANY(c.signs)
+FROM tmp t
+JOIN seattle_roads_geobase g ON t.segkey = g.compkey
+JOIN seattle_sign_codes c ON t.elmntkey::varchar = ANY(c.signs) -- only keep those existing in rules
 JOIN rules r ON r.code = c.code
-JOIN seattle_geobase g ON p.segkey = g.compkey
+WHERE t.rank = 1
+ORDER BY t.objectid)
+UNION ALL
+(SELECT
+    DISTINCT ON (t.objectid, r.code)
+    t.objectid
+    , ST_EndPoint(t.curb_geom)
+    , t.segkey
+    , (CASE
+        WHEN t.azimuth2 BETWEEN 45  AND 135 THEN 'E'
+        WHEN t.azimuth2 BETWEEN 225 AND 315 THEN 'W'
+        WHEN t.azimuth2 BETWEEN 145 AND 225 THEN 'S'
+        ELSE 'N'
+      END)
+    , round(ST_Distance(ST_StartPoint(g.geom), ST_EndPoint(t.curb_geom)))
+    , r.code
+    , r.description
+FROM tmp t
+JOIN seattle_roads_geobase g ON t.segkey = g.compkey
+JOIN seattle_sign_codes c ON t.elmntkey::varchar = ANY(c.signs) -- only keep those existing in rules
+JOIN rules r ON r.code = c.code
+WHERE t.rank = 1
+ORDER BY t.objectid)
+"""
+
+
+# insert seattle signs for directional restrictions (in absence of curblines)
+#  - for no parking, no stopping and time-max parking sections on roads that don't have curbline
+#     data available from the city
+#  - grabs signs with directional data on the sign OR on the same post when the notes reference it (as `s2`)
+#  - puts directional data in, either as facing OR as a direction if the sign has an arrow (easy)
+#  - only do this on streets that don't already have curbline-based signs added, of course
+insert_sign_directional = """
+WITH tmp AS (
+    SELECT DISTINCT s1.unitid, round(ST_Distance(s1.geom, ST_StartPoint(g.geom))) AS distance,
+        (CASE WHEN s2.unitid IS NOT NULL THEN s2.customtext
+              WHEN s1.customtext LIKE '% OF HERE%' THEN substring(s1.customtext from '(\S+ OF HERE)')
+              ELSE NULL
+         END) AS cardinal,
+        (CASE WHEN (s2.unitid IS NULL AND s1.customtext LIKE '% ARROW]%'
+                AND left(substring(s1.customtext from '\[(\S+) ARROW\]'), 1) = 'L') THEN 1
+              WHEN (s2.unitid IS NULL AND s1.customtext LIKE '% ARROW]%'
+                AND left(substring(s1.customtext from '\[(\S+) ARROW\]'), 1) = 'R') THEN 2
+              ELSE NULL
+         END) AS direction
+    FROM seattle_signs_raw s1
+    JOIN seattle_roads_geobase g ON s1.segkey = g.compkey
+    LEFT JOIN seattle_signs_raw s2 ON s1.segkey = s2.segkey AND s1.distance = s2.distance
+        AND ST_isLeft(g.geom, s1.geom) = ST_isLeft(g.geom, s2.geom)
+    LEFT JOIN seattle_sign x ON s1.segkey = x.segkey
+    WHERE x.id IS NULL AND s1.category = ANY(ARRAY['PNP', 'PNS', 'PTIML']) AND
+        ((s2.unitid IS NULL AND s1.customtext LIKE '% OF HERE%') OR
+         (s2.unitid IS NULL AND s1.customtext LIKE '% ARROW%') OR
+         (s2.unitid IS NOT NULL AND right(s1.fieldnotes, 1) = left(s2.customtext, 1)
+            AND s2.category = 'PINST'))
+)
+INSERT INTO seattle_sign (geom, segkey, facing, direction, code, description)
+SELECT
+    p.geom, p.segkey, left(t.cardinal, 1), t.direction, r.code, r.description
+FROM tmp t
+JOIN seattle_signs_raw p ON t.unitid = p.unitid
+JOIN seattle_sign_codes c ON p.unitid = ANY(c.signs) -- only keep those existing in rules
+JOIN rules r ON r.code = c.code
+"""
+
+
+# insert signs based on parklines dataset (in absence of curblines)
+#  - for roads with no curbline data available from the city
+#  - grabs the centrepoint of the blockface line, creates a bidirectional sign there matching:
+#     A) the nearest sign on that street with a similar rule, or
+#     B) in the case of 'unrestricted parking', adds a dummy rule to create empty slot
+#  - ranks blockface line to associate with curbline via "closest within one metre"
+#  - assumes same rule for entire street, less directional "no parking" signs added earlier
+insert_sign_parklines = """
+WITH parklines AS (
+    SELECT DISTINCT p.elmntkey, p.segkey, p.side, p.parking_category,
+        ST_Line_Interpolate_Point(ST_LineMerge(p.geom), 0.5) AS centerpoint
+    FROM seattle_parklines p
+    JOIN seattle_roads_geobase g ON p.segkey = g.compkey
+    LEFT JOIN seattle_sign s ON s.segkey = p.segkey
+        AND ST_isLeft(g.geom, s.geom) = ST_isLeft(g.geom, ST_Line_Interpolate_Point(ST_LineMerge(p.geom), 0.5))
+    LEFT JOIN seattle_signs_raw sr ON s.sid = sr.unitid
+    WHERE (s.id IS NULL OR (sr.unitid IS NOT NULL AND sr.category != ANY(ARRAY['PNP', 'PNS', 'PTIML'])))
+        AND p.parking_category = ANY(ARRAY['Time Limited Parking', 'Restricted Parking Zone',
+            'No Parking Allowed', 'Unrestricted Parking'])
+        AND ST_GeometryType(ST_LineMerge(p.geom)) = 'ST_LineString'
+), tmp AS (
+    (SELECT p.elmntkey, p.segkey, p.centerpoint, r.code, r.description,
+        ROW_NUMBER() OVER (PARTITION BY (p.elmntkey, left(s.signtype, 2)) ORDER BY ST_Distance(p.centerpoint, s.geom)) AS rank_sign
+    FROM parklines p
+    JOIN seattle_roads_geobase g ON p.segkey = g.compkey
+    JOIN seattle_signs_raw s ON p.segkey = s.segkey AND ST_isLeft(g.geom, p.centerpoint) = ST_isLeft(g.geom, s.geom) AND (
+        (p.parking_category = 'Time Limited Parking' AND s.category = 'PTIML') OR
+        (p.parking_category = 'Restricted Parking Zone' AND s.category = 'PRZ') OR
+        (p.parking_category = 'No Parking Allowed' AND s.category = 'PNP')
+    )
+    JOIN seattle_sign_codes c ON s.unitid = ANY(c.signs) -- only keep those existing in rules
+    JOIN rules r ON r.code = c.code)
+    UNION ALL
+    (SELECT p.elmntkey, p.segkey, p.centerpoint, r.code, r.description, 1 AS rank_sign
+     FROM parklines p
+     JOIN rules r ON r.code = 'SEA-PRM'
+     WHERE p.parking_category = 'Unrestricted Parking')
+)
+INSERT INTO seattle_sign (geom, segkey, code, description)
+SELECT
+    t.centerpoint, t.segkey, t.code, t.description
+FROM tmp t
+WHERE t.rank_sign = 1
 """
 
 
@@ -123,7 +286,8 @@ SELECT
     array_agg(DISTINCT s.id),
     ST_SetSRID(ST_MakePoint(avg(ST_X(s.geom)), avg(ST_Y(s.geom))), 3857)
 FROM seattle_sign s
-GROUP BY s.segkey, s.distance
+JOIN seattle_roads_geobase g ON s.segkey = g.compkey
+GROUP BY s.segkey, s.distance, ST_isLeft(g.geom, s.geom)
 """
 
 
@@ -199,18 +363,14 @@ UPDATE seattle_sign s
 SET direction = (
     CASE WHEN (degrees(ST_Azimuth(ST_EndPoint(g.geom), ST_StartPoint(g.geom))) BETWEEN 45 AND 135) THEN ( -- E to W
        CASE WHEN ST_isLeft(g.geom, s.geom) = 1 THEN (
-        CASE WHEN substring(lower(p.customtext), '.*(west |right arrow|rt arrow).*') IS NOT NULL THEN 1
-             WHEN substring(lower(p.customtext), '.*(east |left arrow|lt arrow).*')  IS NOT NULL THEN 2
-             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 1
-             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 2
+        CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 2
+             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 1
              ELSE 0
         END
        )
        ELSE (
-        CASE WHEN substring(lower(p.customtext), '.*(west |right arrow|rt arrow).*') IS NOT NULL THEN 2
-             WHEN substring(lower(p.customtext), '.*(east |left arrow|lt arrow).*')  IS NOT NULL THEN 1
-             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 2
-             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 1
+        CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 1
+             WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 2
              ELSE 0
         END
        )
@@ -218,17 +378,13 @@ SET direction = (
       )
       WHEN (degrees(ST_Azimuth(ST_EndPoint(g.geom), ST_StartPoint(g.geom))) BETWEEN 225 AND 315) THEN ( -- W to E
         CASE WHEN ST_isLeft(g.geom, s.geom) = -1 THEN (
-         CASE WHEN substring(lower(p.customtext), '.*(west |right arrow|rt arrow).*') IS NOT NULL THEN 2
-              WHEN substring(lower(p.customtext), '.*(east |left arrow|lt arrow).*')  IS NOT NULL THEN 1
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 2
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 2
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 1
               ELSE 0
          END
         )
         ELSE (
-         CASE WHEN substring(lower(p.customtext), '.*(west |right arrow|rt arrow).*') IS NOT NULL THEN 1
-              WHEN substring(lower(p.customtext), '.*(east |left arrow|lt arrow).*')  IS NOT NULL THEN 2
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 1
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['W','NW','SW']) THEN 1
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['E','NE','SE']) THEN 2
               ELSE 0
          END
@@ -237,17 +393,13 @@ SET direction = (
        )
        WHEN (degrees(ST_Azimuth(ST_EndPoint(g.geom), ST_StartPoint(g.geom))) BETWEEN 145 AND 225) THEN ( -- S to N
         CASE WHEN ST_isLeft(g.geom, s.geom) = -1 THEN (
-         CASE WHEN substring(lower(p.customtext), '.*(north |right arrow|rt arrow).*') IS NOT NULL THEN 1
-              WHEN substring(lower(p.customtext), '.*(south |left arrow|lt arrow).*')  IS NOT NULL THEN 2
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 1
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 1
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['S','SW','SE']) THEN 2
               ELSE 0
          END
         )
         ELSE (
-         CASE WHEN substring(lower(p.customtext), '.*(north |right arrow|rt arrow).*') IS NOT NULL THEN 2
-              WHEN substring(lower(p.customtext), '.*(south |left arrow|lt arrow).*')  IS NOT NULL THEN 1
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 2
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 2
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['S','SW','SE']) THEN 1
               ELSE 0
          END
@@ -256,17 +408,13 @@ SET direction = (
        )
        ELSE ( -- N to S
         CASE WHEN ST_isLeft(g.geom, s.geom) = -1 THEN (
-         CASE WHEN substring(lower(p.customtext), '.*(north |right arrow|rt arrow).*') IS NOT NULL THEN 2
-              WHEN substring(lower(p.customtext), '.*(south |left arrow|lt arrow).*')  IS NOT NULL THEN 1
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 2
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 2
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['S','SW','SE']) THEN 1
               ELSE 0
          END
         )
         ELSE (
-         CASE WHEN substring(lower(p.customtext), '.*(north |right arrow|rt arrow).*') IS NOT NULL THEN 1
-              WHEN substring(lower(p.customtext), '.*(south |left arrow|lt arrow).*')  IS NOT NULL THEN 2
-              WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 1
+         CASE WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['N','NW','NE']) THEN 1
               WHEN s.facing IS NOT NULL AND s.facing = ANY(ARRAY['S','SW','SE']) THEN 2
               ELSE 0
          END
@@ -275,8 +423,8 @@ SET direction = (
        )
        END
       )
-FROM seattle_signs_raw p, seattle_signpost x, seattle_roads_geobase g
-WHERE s.sid = p.unitid AND s.signpost = x.id AND x.geobase_id = g.compkey
+FROM seattle_signpost x, seattle_roads_geobase g
+WHERE s.signpost = x.id AND x.geobase_id = g.compkey AND s.direction IS NULL
 """
 
 

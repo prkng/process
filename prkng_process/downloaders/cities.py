@@ -2,8 +2,7 @@
 from __future__ import print_function, unicode_literals
 
 import csv
-import geojson
-import math
+import json
 import os
 import requests
 import subprocess
@@ -13,7 +12,7 @@ import zipfile
 from . import DataSource, script
 from .. import CONFIG
 from ..logger import Logger
-from ..utils import download_progress
+from ..utils import download_progress, download_arcgis, pretty_time, tstr_to_float
 
 
 def CitySources():
@@ -519,6 +518,8 @@ class Seattle(DataSource):
         self.city = 'seattle'
         # ArcGIS REST API
         self.url_signs = "http://gisrevprxy.seattle.gov/arcgis/rest/services/SDOT_EXT/DSG_datasharing/MapServer/2/query"
+        self.url_curbs = "http://gisrevprxy.seattle.gov/arcgis/rest/services/SDOT_EXT/DSG_datasharing/MapServer/27/query"
+        self.url_blocks = "http://gisrevprxy.seattle.gov/arcgis/rest/services/SDOT_EXT/DSG_datasharing/MapServer/14/query"
         self.url_roads = "https://data.seattle.gov/download/afip-2mzr/application/zip"
 
     def download(self):
@@ -526,47 +527,14 @@ class Seattle(DataSource):
         self.download_roads()
 
     def download_signs(self):
-        features = []
-        for x in ["R7", "R8"]:
-            Logger.info("Downloading Seattle sign data ({})".format(x))
-            count = requests.get(self.url_signs, params={"f": "json", "where": "SIGNTYPE LIKE '%{}-%'".format(x),
-                "returnCountOnly": True})
-            count = count.json()["count"]
-            count = int(math.ceil(float(count) / 1000.0))
+        Logger.info("Downloading Seattle sign data")
+        download_arcgis(self.url_signs, "UNITID", "/tmp/seattle_sign.geojson")
 
-            print("[", end='')
-            num = 0
-            print_every_iter = int(count) / 50
-            next_print = 0
-            while num < count:
-                data = requests.get(self.url_signs, params={"f": "json", "where": "SIGNTYPE LIKE '%{}-%'".format(x),
-                    "outFields": "*", "returnGeometry": True, "resultRecordCount": 1000, "resultOffset": (num * 1000)})
-                data = data.json()["features"]
-                num += 1
-                features += data
-                if num >= next_print:
-                    sys.stdout.write("=")
-                    sys.stdout.flush()
-                    next_print += print_every_iter
-            print("] Download complete...")
+        Logger.info("Downloading Seattle curbline data")
+        download_arcgis(self.url_curbs, "OBJECTID", "/tmp/seattle_curblines.geojson")
 
-
-        Logger.info("Writing...")
-        processed_features = []
-        invalid_signs = 0
-        for x in features:
-            if 'NaN' in [x["geometry"]["x"], x["geometry"]["y"]]:
-                invalid_signs += 1
-                continue
-            feat = geojson.Feature(id=x["attributes"]["COMPKEY"], properties=x["attributes"],
-                    geometry=geojson.Point((x["geometry"]["x"], x["geometry"]["y"])))
-            processed_features.append(feat)
-        processed_features = geojson.FeatureCollection(processed_features)
-
-        if invalid_signs:
-            Logger.info("{} signs with invalid geometries, discarding".format(invalid_signs))
-        with open("/tmp/seattle_signs.geojson", "w") as f:
-            geojson.dump(processed_features, f)
+        Logger.info("Downloading Seattle blockline data")
+        download_arcgis(self.url_curbs, "ELMNTKEY", "/tmp/seattle_blocklines.geojson")
 
     def download_roads(self):
         Logger.info("Downloading Seattle roads data")
@@ -592,10 +560,28 @@ class Seattle(DataSource):
             'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
             'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
             '-nlt point -s_srs EPSG:2926 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
-            '-nln seattle_signs_raw {}'.format("/tmp/seattle_signs.geojson", **CONFIG),
+            '-nln seattle_signs_raw {}'.format("/tmp/seattle_sign.geojson", **CONFIG),
             shell=True
         )
         self.db.vacuum_analyze("public", "seattle_signs_raw")
+
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt multilinestring -s_srs EPSG:2926 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln seattle_curblines {}'.format("/tmp/seattle_curblines.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "seattle_curblines")
+
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt multilinestring -s_srs EPSG:2926 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln seattle_parklines {}'.format("/tmp/seattle_parklines.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "seattle_parklines")
 
         subprocess.check_call(
             'shp2pgsql -d -g geom -t 2D -s 2926:3857 -S -W LATIN1 -I {filename} seattle_geobase | '
@@ -604,23 +590,6 @@ class Seattle(DataSource):
             shell=True
         )
         self.db.vacuum_analyze("public", "seattle_geobase")
-
-        with open(script('rules_seattle_glue.csv'), "rb") as f:
-            csv.field_size_limit(999999)
-            csvreader = csv.reader(f)
-            next(csvreader, None)
-            rg_lines = ["('{}', '{{{}}}'::varchar[])".format(x[0], x[1]) for x in csvreader]
-            self.db.query("""
-                DROP TABLE IF EXISTS seattle_sign_codes;
-                CREATE TABLE seattle_sign_codes (
-                    id SERIAL PRIMARY KEY,
-                    code varchar,
-                    signs varchar[]
-                );
-
-                INSERT INTO seattle_sign_codes (code, signs)
-                    SELECT * FROM (VALUES {}) AS d(code, signs);
-            """.format(",".join(rg_lines)))
 
     def load_rules(self):
         """
@@ -637,6 +606,110 @@ class Seattle(DataSource):
             self.db.query(infile.read().format(filename))
             self.db.vacuum_analyze("public", "seattle_rules_translation")
 
+        Logger.info("Loading dynamic rules for {}".format(self.name))
+        # load dynamic paid parking rules
+        paid_rules = []
+        data = self.db.query("""
+            SELECT ROW_NUMBER() OVER (ORDER BY wkd_start1), array_agg(elmntkey), wkd_start1,
+                wkd_end1, wkd_start2, wkd_end2, wkd_start3, wkd_end3, sat_start1, sat_end1,
+                sat_start2, sat_end2, sat_start3, sat_end3, sun_start1, sun_end1, sun_start2,
+                sun_end2, sun_start3, sun_end3, wkd_rate1, wkd_rate2, wkd_rate3, sat_rate1,
+                sat_rate2, sat_rate3, sun_rate1, sun_rate2, sun_rate3, parking_time_limit,
+                rpz_spaces != 0, rpz_zone, peak_hour
+            FROM seattle_parklines
+            WHERE parking_category = 'Paid Parking'
+            GROUP BY wkd_start1, wkd_end1, wkd_start2, wkd_end2, wkd_start3,
+                wkd_end3, sat_start1, sat_end1, sat_start2, sat_end2, sat_start3, sat_end3,
+                sun_start1, sun_end1, sun_start2, sun_end2, sun_start3, sun_end3, wkd_rate1,
+                wkd_rate2, wkd_rate3, sat_rate1, sat_rate2, sat_rate3, sun_rate1, sun_rate2,
+                sun_rate3, parking_time_limit, rpz_spaces != 0, rpz_zone, peak_hour
+        """)
+        for x in data:
+            wkd2 = wkd3 = sat2 = sat3 = sun2 = sun3 = False
+            if x[2] and x[3]:
+                # weekday start/end times no1
+                start, end = x[2], x[3]
+                if x[4] and x[5] and x[4] == (end + 1) and x[20] == x[21]:
+                    end = x[5]
+                    wkd2 = True
+                    if x[6] and x[7] and x[6] == (end + 1) and x[21] == x[22]:
+                        end = x[7]
+                        wkd3 = True
+                paid_rules.append(self._dynrule(x, "MON-FRI", start, end, 1))
+            if x[4] and x[5] and not wkd2:
+                # weekday start/end times no2
+                start, end = x[4], x[5]
+                if x[6] and x[7] and x[6] == (end + 1) and x[21] == x[22]:
+                    end = x[7]
+                    wkd3 = True
+                paid_rules.append(self._dynrule(x, "MON-FRI", start, end, 2))
+            if x[6] and x[7] and not wkd3:
+                # weekday start/end times no3
+                paid_rules.append(self._dynrule(x, "MON-FRI", x[6], x[7], 3))
+            if x[8] and x[9]:
+                # saturday start/end times no1
+                start, end = x[8], x[9]
+                if x[10] and x[11] and x[10] == (end + 1) and x[23] == x[24]:
+                    end = x[11]
+                    sat2 = True
+                    if x[12] and x[13] and x[12] == (end + 1) and x[24] == x[25]:
+                        end = x[13]
+                        sat3 = True
+                paid_rules.append(self._dynrule(x, "SAT", start, end, 4))
+            if x[10] and x[11] and not sat2:
+                # saturday start/end times no2
+                start, end = x[10], x[11]
+                if x[12] and x[13] and x[12] == (end + 1) and x[24] == x[25]:
+                    end = x[13]
+                    sat3 = True
+                paid_rules.append(self._dynrule(x, "SAT", start, end, 5))
+            if x[12] and x[13] and not sat3:
+                # saturday start/end times no3
+                paid_rules.append(self._dynrule(x, "SAT", start, end, 6))
+            if x[14] and x[15]:
+                # sunday start/end times no1
+                start, end = x[14], x[15]
+                if x[16] and x[17] and x[16] == (end + 1) and x[26] == x[27]:
+                    end = x[17]
+                    sun2 = True
+                    if x[18] and x[19] and x[18] == (end + 1) and x[27] == x[28]:
+                        end = x[19]
+                        sun3 = True
+                paid_rules.append(self._dynrule(x, "SUN", start, end, 7))
+            if x[16] and x[17] and not sun2:
+                # sunday start/end times no2
+                start, end = x[16], x[17]
+                if x[18] and x[19] and x[18] == (end + 1) and x[27] == x[28]:
+                    end = x[19]
+                    sun3 = True
+                paid_rules.append(self._dynrule(x, "SUN", start, end, 8))
+            if x[18] and x[19] and not sun3:
+                # sunday start/end times no3
+                paid_rules.append(self._dynrule(x, "SUN", start, end, 9))
+            if x[32]:
+                # peak hour restriction
+                insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
+                code, agenda = "SEA-PAID-{}-10".format(x[0]), {str(y): [] for y in range(1,8)}
+                for z in x[32].split(" "):
+                    for y in range(1,6):
+                        agenda[str(y)].append([tstr_to_float(z.split("-")[0] + z[-2:]),
+                            tstr_to_float(z.split("-")[1])])
+                desc = "PEAK HOUR NO PARKING WEEKDAYS {}".format(x[32])
+                paid_rules.append(insert_qry.format(code, desc, json.dumps(agenda), "NULL",
+                    ["peak_hour"], "", x[1]))
+
+        db.query("""
+            INSERT INTO rules (code, description, agenda, time_max_parking, restrict_types, permit_no)
+            SELECT code, description, agenda, time_max_parking, restrict_types, permit_no
+            FROM (VALUES {}) AS d(code, description, agenda, time_max_parking, restrict_types, permit_no, ids)
+        """.format(",".join([x for x in paid_rules])))
+        db.query("""
+            INSERT INTO seattle_sign_codes (code, signs)
+            SELECT code, ids
+            FROM (VALUES {}) AS d(code, description, agenda, time_max_parking, restrict_types,
+                permit_no, ids)
+        """.format(",".join([x for x in paid_rules])))
+
     def get_extent(self):
         """
         get extent in the format latmin, longmin, latmax, longmax
@@ -648,3 +721,16 @@ class Seattle(DataSource):
             ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
             """)[0]
         return res
+
+    def _dynrule(x, per, start, end, count):
+        insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
+        code, agenda = "SEA-PAID-{}-{}".format((x[0], count)), {str(y): [] for y in range(1,8)}
+        if per = "MON-FRI":
+            for y in range(1,6):
+                agenda[str(y)].append([float(start) / 60.0, round(float(end) / 60.0)])
+        else:
+            agenda["6" if per == "SAT" else "7"].append([float(start) / 60.0, round(float(end) / 60.0)])
+        desc = "PAID PARKING {}-{} {} ${}/hr".format(pretty_time(start), pretty_time(end), per,
+            "{0:.2f}".format(float(x[19 + count])))
+        return insert_qry.format(code, desc, json.dumps(agenda), int(x[29]) if x[29] else "NULL",
+            ['paid'] + (['permit'] if x[30] else []), x[31] if x[31] else "", x[1])

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import geojson
 import hashlib
-import sys
+import math
 import os
 import random
 import requests
+import sys
 
 
 def download_progress(url, filename, directory, ua=False):
@@ -44,6 +46,71 @@ def download_progress(url, filename, directory, ua=False):
 
         print("] Download complete...")
     return full_path
+
+def download_arcgis(url, pkey, filename):
+    """
+    Downloads from an ArcGIS REST API query endpoint and shows a simple progress bar.
+    Endpoint must support pagination.
+
+    :param url: resource to download
+    :param pkey: the primary key for the data to download
+    :param filename: destination filename (full path)
+    """
+
+    features = []
+    where = pkey + " IS NOT NULL"
+
+    count = requests.get(url, params={"f": "json", "where": where, "returnCountOnly": True})
+    count = count.json()["count"]
+    count = int(math.ceil(float(count) / 1000.0))
+
+    print("[", end='')
+    num = 0
+    print_every_iter = int(count) / 50
+    next_print = 0
+    while num < count:
+        data = requests.get(url, params={"f": "json", "where": where, "outFields": "*",
+            "returnGeometry": True, "resultRecordCount": 1000, "resultOffset": (num * 1000)})
+        data = data.json()["features"]
+        num += 1
+        features += data
+        if num >= next_print:
+            sys.stdout.write("=")
+            sys.stdout.flush()
+            next_print += print_every_iter
+
+    with open(filename, "wb") as f:
+        processed_features = []
+        for x in features:
+            feat = geojson.Feature(id=x["attributes"][pkey], properties=x["attributes"],
+                    geometry=geojson.MultiLineString(x["geometry"]["paths"]))
+            processed_features.append(feat)
+        processed_features = geojson.FeatureCollection(processed_features)
+        geojson.dump(processed_features, f)
+
+    print("] Download complete...")
+    return filename
+
+def pretty_time(mins):
+    """
+    Convert time from minutes to 12-hour string with AM/PM.
+
+    :param mins: minutes (integer)
+    """
+    return "{}{}".format(((y / 60 + ":" + y % 60), "AM" if y < 720 else "PM"))
+
+def tstr_to_float(tstr):
+    """
+    Convert time from 12-hour string (with AM/PM) to agenda-compatible float.
+
+    :param tstr: 12-hour time string
+    """
+    afloat = float(tstr.rstrip("APM").split(":")[0])
+    if "PM" in tstr and tstr.split(":")[0] != "12":
+        afloat += 12.0
+    if ":" in mins:
+        afloat += float(tstr.rstrip("APM").split(":")[1][0:2]) / 60
+    return afloat
 
 def can_be_int(data):
     """

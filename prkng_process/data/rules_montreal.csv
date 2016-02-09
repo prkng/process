@@ -1473,7 +1473,7 @@ AV-RJ,\A 05h-09h   15h30-18h30  LUN A VEN,,,,15.5,18.5,3,1,1,1,1,1,,,,,
 AV-RB,\A 06h-10h  15h30-19h30 LUN. AU VEN.,,,,6,10,4,1,1,1,1,1,,,,,
 AV-RB,\A 06h-10h  15h30-19h30 LUN. AU VEN.,,,,15.5,19.5,4,1,1,1,1,1,,,,,
 AV-OD,\A 08h-18h  LUN. AU VEN.,,,,8,18,10,1,1,1,1,1,,,,,
-R-AL,\P RESERVE AUTOBUS TOURISTIQUES 2h,,,120,0,24,24,,,,,,,,1,,tourist_bus
+R-AL,\P RESERVE AUTOBUS TOURISTIQUES 2h,,,,0,24,24,,,,,,,,1,,tourist_bus
 R-XH,\P EXCEPTE S3R 15h-21h LUN. À  VEN. et 9h-21h SAM.DIM.,,,,15,21,6,1,1,1,1,1,,,,,permit
 R-XH,\P EXCEPTE S3R 15h-21h LUN. À  VEN. et 9h-21h SAM.DIM.,,,,9,21,12,,,,,,1,1,,,permit
 AV-QZ,\A 07h-09h30  15h-19h LUN. AU VEN.,,,,7,9.5,2.5,1,1,1,1,1,,,,,
