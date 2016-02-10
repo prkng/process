@@ -528,13 +528,13 @@ class Seattle(DataSource):
 
     def download_signs(self):
         Logger.info("Downloading Seattle sign data")
-        download_arcgis(self.url_signs, "UNITID", "/tmp/seattle_sign.geojson")
+        download_arcgis(self.url_signs, "point", "COMPKEY", "/tmp/seattle_sign.geojson")
 
         Logger.info("Downloading Seattle curbline data")
-        download_arcgis(self.url_curbs, "OBJECTID", "/tmp/seattle_curblines.geojson")
+        download_arcgis(self.url_curbs, "multilinestring", "OBJECTID", "/tmp/seattle_curblines.geojson")
 
         Logger.info("Downloading Seattle blockline data")
-        download_arcgis(self.url_curbs, "ELMNTKEY", "/tmp/seattle_blocklines.geojson")
+        download_arcgis(self.url_blocks, "multilinestring", "ELMNTKEY", "/tmp/seattle_blocklines.geojson")
 
     def download_roads(self):
         Logger.info("Downloading Seattle roads data")

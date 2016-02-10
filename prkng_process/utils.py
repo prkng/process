@@ -47,12 +47,13 @@ def download_progress(url, filename, directory, ua=False):
         print("] Download complete...")
     return full_path
 
-def download_arcgis(url, pkey, filename):
+def download_arcgis(url, gtype, pkey, filename):
     """
     Downloads from an ArcGIS REST API query endpoint and shows a simple progress bar.
     Endpoint must support pagination.
 
     :param url: resource to download
+    :param gtype: geometry type
     :param pkey: the primary key for the data to download
     :param filename: destination filename (full path)
     """
@@ -83,7 +84,8 @@ def download_arcgis(url, pkey, filename):
         processed_features = []
         for x in features:
             feat = geojson.Feature(id=x["attributes"][pkey], properties=x["attributes"],
-                    geometry=geojson.MultiLineString(x["geometry"]["paths"]))
+                geometry=geojson.Point((x["geometry"]["x"], x["geometry"]["y"]))\
+                    if gtype == "point" else geojson.MultiLineString(x["geometry"]["paths"]))
             processed_features.append(feat)
         processed_features = geojson.FeatureCollection(processed_features)
         geojson.dump(processed_features, f)
