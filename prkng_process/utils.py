@@ -82,9 +82,9 @@ def download_arcgis(url, gtype, pkey, filename):
 
     with open(filename, "wb") as f:
         processed_features = []
-        if gtype == "point" and 'NaN' in [x["geometry"]["x"], x["geometry"]["y"]]:
-            continue
         for x in features:
+            if gtype == "point" and 'NaN' in [x["geometry"]["x"], x["geometry"]["y"]]:
+                continue
             feat = geojson.Feature(id=x["attributes"][pkey], properties=x["attributes"],
                 geometry=geojson.Point((x["geometry"]["x"], x["geometry"]["y"]))\
                     if gtype == "point" else geojson.MultiLineString(x["geometry"]["paths"]))
