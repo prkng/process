@@ -534,7 +534,7 @@ class Seattle(DataSource):
         download_arcgis(self.url_curbs, "multilinestring", "OBJECTID", "/tmp/seattle_curblines.geojson")
 
         Logger.info("Downloading Seattle blockline data")
-        download_arcgis(self.url_blocks, "multilinestring", "ELMNTKEY", "/tmp/seattle_blocklines.geojson")
+        download_arcgis(self.url_blocks, "multilinestring", "ELMNTKEY", "/tmp/seattle_parklines.geojson")
 
     def download_roads(self):
         Logger.info("Downloading Seattle roads data")
@@ -722,6 +722,7 @@ class Seattle(DataSource):
             """)[0]
         return res
 
+    @staticmethod
     def _dynrule(x, per, start, end, count):
         insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
         code, agenda = "SEA-PAID-{}-{}".format((x[0], count)), {str(y): [] for y in range(1,8)}
