@@ -110,7 +110,7 @@ WITH tmp AS (
           ) AS rank
     FROM roads o
     JOIN newyork_geobase m ON o.geom && ST_Expand(m.geom, 10)
-    JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7_sc::int = s.b7_sc
+    JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7_sc::int = s.b7sc
     WHERE ST_Contains(ST_Buffer(m.geom, 30), o.geom)
 )
 INSERT INTO newyork_roads_geobase
@@ -149,7 +149,7 @@ WITH tmp AS (
       FROM roads o
       LEFT JOIN newyork_roads_geobase orig ON orig.id = o.id
       JOIN newyork_geobase m ON o.geom && ST_Expand(m.geom, 10)
-      JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7_sc::int = s.b7_sc
+      JOIN newyork_snd s ON m.boroughcod::int = s.boro AND m.b7_sc::int = s.b7sc
       WHERE ST_Contains(ST_Buffer(o.geom, 30), m.geom)
         AND orig.id IS NULL
 )
