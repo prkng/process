@@ -16,7 +16,7 @@ from ..utils import download_progress, download_arcgis, pretty_time, tstr_to_flo
 
 
 def CitySources():
-    return [Montreal, Quebec, NewYork, Seattle]
+    return [Montreal, Quebec, NewYork, Seattle, Boston]
 
 
 class Montreal(DataSource):
@@ -614,6 +614,75 @@ class Seattle(DataSource):
             """WITH tmp AS (
                 SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
                 FROM seattle_signs_raw
+            ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
+            """)[0]
+        return res
+
+
+class Boston(DataSource):
+    """
+    Download data from Boston city
+    """
+    def __init__(self):
+        super(Boston, self).__init__()
+        self.name = 'Boston'
+        self.city = 'boston'
+
+        self.url_roads_boston = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_35.zip"
+        self.url_roads_cambridge = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_49.zip"
+        self.url_roads_brookline = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_46.zip"
+        self.url_roads_somerville = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_274.zip"
+
+    def download(self):
+        Logger.info("Downloading Boston roads data")
+        for x in ["boston", "cambridge", "brookline", "somerville"]:
+            url, ofile = getattr(self, 'url_roads_'+x), getattr(self, 'roads_'+x+'_shapefile')
+            zfile = download_progress(url, os.path.basename(url), CONFIG['DOWNLOAD_DIRECTORY'])
+
+            Logger.info("Unzipping")
+            with zipfile.ZipFile(zfile) as zip:
+                ofile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
+                    name for name in zip.namelist()
+                    if name.lower().endswith('.shp')
+                ][0])
+                zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
+
+    def load(self):
+        """
+        Loads data into database
+        """
+        for x in [self.roads_boston_shapefile, self.roads_cambridge_shapefile,
+                self.roads_brookline_shapefile, self.roads_somerville_shapefile]:
+            subprocess.check_call(
+                'shp2pgsql -a -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_geobase | '
+                'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+                .format(filename=x, **CONFIG),
+                shell=True
+            )
+
+    def load_rules(self):
+        """
+        load parking rules translation
+        """
+        Logger.info("Loading parking rules for {}".format(self.name))
+
+        filename = script("rules_boston.csv")
+
+        Logger.debug("loading file '%s' with script '%s'" %
+                     (filename, script('boston_load_rules.sql')))
+
+        with open(script('boston_load_rules.sql'), 'rb') as infile:
+            self.db.query(infile.read().format(filename))
+            self.db.vacuum_analyze("public", "boston_rules_translation")
+
+    def get_extent(self):
+        """
+        get extent in the format latmin, longmin, latmax, longmax
+        """
+        res = self.db.query(
+            """WITH tmp AS (
+                SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
+                FROM boston_geobase
             ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
             """)[0]
         return res
