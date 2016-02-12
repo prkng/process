@@ -31,11 +31,11 @@ CREATE TABLE boston_roads_geobase (
 WITH tmp AS (
     SELECT
         o.*
-        , m.roadsegment
+        , m.roadsegmen AS roadsegment
         , rank() OVER (
             PARTITION BY o.id ORDER BY
               ST_HausdorffDistance(o.geom, m.geom)
-              , levenshtein(o.name, m.ord_stname)
+              , levenshtein(o.name, m.street_nam)
               , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
           ) AS rank
     FROM roads o
@@ -58,11 +58,11 @@ WHERE rank = 1;
 WITH tmp AS (
       SELECT
           o.*
-          , m.roadsegment
+          , m.roadsegmen AS roadsegment
           , rank() OVER (
               PARTITION BY o.id ORDER BY
                 ST_HausdorffDistance(o.geom, m.geom)
-                , levenshtein(o.name, m.ord_stname)
+                , levenshtein(o.name, m.street_nam)
                 , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
             ) AS rank
       FROM roads o
@@ -300,8 +300,7 @@ SELECT
         json_build_object(
             'code', t.code,
             'description', r.description,
-            'season_start', r.season_start,
-            'season_end', r.season_end,
+            'periods', r.periods,
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
@@ -371,8 +370,7 @@ SELECT
     , t.isleft
     , t.name as way_name
     , rt.description
-    , rt.season_start
-    , rt.season_end
+    , rt.periods
     , rt.time_max_parking
     , rt.time_start
     , rt.time_end

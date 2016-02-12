@@ -634,25 +634,33 @@ class Boston(DataSource):
         self.url_roads_somerville = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_274.zip"
 
     def download(self):
-        Logger.info("Downloading Boston roads data")
         for x in ["boston", "cambridge", "brookline", "somerville"]:
-            url, ofile = getattr(self, 'url_roads_'+x), getattr(self, 'roads_'+x+'_shapefile')
+            Logger.info("Downloading Boston roads data ({})".format(x.capitalize()))
+            url = getattr(self, 'url_roads_'+x)
             zfile = download_progress(url, os.path.basename(url), CONFIG['DOWNLOAD_DIRECTORY'])
 
             Logger.info("Unzipping")
             with zipfile.ZipFile(zfile) as zip:
-                ofile = os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
-                    name for name in zip.namelist()
-                    if name.lower().endswith('.shp')
-                ][0])
+                setattr(self, 'roads_'+x+'_shapefile',
+                    os.path.join(CONFIG['DOWNLOAD_DIRECTORY'], [
+                        name for name in zip.namelist()
+                        if name.lower().endswith('.shp')
+                    ][0]))
                 zip.extractall(CONFIG['DOWNLOAD_DIRECTORY'])
 
     def load(self):
         """
         Loads data into database
         """
-        for x in [self.roads_boston_shapefile, self.roads_cambridge_shapefile,
-                self.roads_brookline_shapefile, self.roads_somerville_shapefile]:
+        subprocess.check_call(
+            'shp2pgsql -d -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_geobase | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=self.roads_boston_shapefile, **CONFIG),
+            shell=True
+        )
+
+        for x in [self.roads_cambridge_shapefile, self.roads_brookline_shapefile,
+                self.roads_somerville_shapefile]:
             subprocess.check_call(
                 'shp2pgsql -a -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_geobase | '
                 'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'

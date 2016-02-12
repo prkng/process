@@ -17,7 +17,7 @@ from .logger import Logger
 
 # distance from road to slot
 LINE_OFFSET = 6
-CITIES = ["montreal", "quebec", "newyork", "seattle"]
+CITIES = ["montreal", "quebec", "newyork", "seattle", "boston"]
 db = PostgresWrapper(
     "host='{PG_HOST}' port={PG_PORT} dbname={PG_DATABASE} "
     "user={PG_USERNAME} password={PG_PASSWORD} ".format(**CONFIG))
@@ -418,6 +418,102 @@ def process_seattle(debug=False):
         db.vacuum_analyze('public', 'seattle_slots_debug')
 
 
+def process_boston(debug=False):
+    """
+    process boston data and generate parking slots
+    """
+    def info(msg):
+        return Logger.info("Boston: {}".format(msg))
+
+    def debug(msg):
+        return Logger.debug("Boston: {}".format(msg))
+
+    def warning(msg):
+        return Logger.warning("Boston: {}".format(msg))
+
+    debug('Loading and translating rules')
+    insert_rules('boston_rules_translation')
+    db.vacuum_analyze('public', 'rules')
+
+    info("Matching OSM roads with geobase")
+    db.query(bos.match_roads_geobase)
+    db.create_index('boston_roads_geobase', 'id')
+    db.create_index('boston_roads_geobase', 'roadsegment')
+    db.create_index('boston_roads_geobase', 'osm_id')
+    db.create_index('boston_roads_geobase', 'name')
+    db.create_index('boston_roads_geobase', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_roads_geobase')
+
+    info("Creating sign table")
+    db.query(bos.create_sign)
+
+    info("Loading signs")
+    db.query(bos.insert_sign)
+    db.create_index('boston_sign', 'geom', index_type='gist')
+    db.create_index('boston_sign', 'direction')
+    db.create_index('boston_sign', 'elevation')
+    db.create_index('boston_sign', 'signpost')
+    db.vacuum_analyze('public', 'boston_sign')
+
+    info("Creating sign posts")
+    db.query(bos.create_signpost)
+    db.query(bos.insert_signpost)
+    db.create_index('boston_signpost', 'geom', index_type='gist')
+    db.create_index('boston_signpost', 'geobase_id')
+    db.vacuum_analyze('public', 'boston_signpost')
+
+    info("Projecting signposts on road")
+    duplicates = db.query(bos.project_signposts)
+    if duplicates:
+        warning("Duplicates found for projected signposts : {}"
+                .format(str(duplicates)))
+
+    db.create_index('boston_signpost_onroad', 'id')
+    db.create_index('boston_signpost_onroad', 'road_id')
+    db.create_index('boston_signpost_onroad', 'isleft')
+    db.create_index('boston_signpost_onroad', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_signpost_onroad')
+
+    percent, total = db.query(bos.count_signpost_projected)[0]
+
+    if percent < 100:
+        warning("Only {:.0f}% of signposts have been bound to a road. Total is {}"
+                .format(percent, total))
+        db.query(bos.generate_signposts_orphans)
+        info("Table 'boston_signpost_orphans' has been generated to check for orphans")
+
+    info("Creating slots between signposts")
+    db.query(bos.create_slots_likely)
+    db.query(bos.insert_slots_likely.format(isleft=1))
+    db.query(bos.insert_slots_likely.format(isleft=-1))
+    db.create_index('boston_slots_likely', 'id')
+    db.create_index('boston_slots_likely', 'signposts', index_type='gin')
+    db.create_index('boston_slots_likely', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_slots_likely')
+
+    db.query(bos.create_nextpoints_for_signposts)
+    db.create_index('boston_nextpoints', 'id')
+    db.create_index('boston_nextpoints', 'slot_id')
+    db.create_index('boston_nextpoints', 'direction')
+    db.vacuum_analyze('public', 'boston_nextpoints')
+
+    db.create_index('boston_slots_temp', 'id')
+    db.create_index('boston_slots_temp', 'geom', index_type='gist')
+    db.create_index('boston_slots_temp', 'rules', index_type='gin')
+    db.query(bos.insert_slots_temp.format(offset=LINE_OFFSET))
+
+    info("Creating and overlaying paid slots")
+    db.query(bos.overlay_paid_rules)
+    db.vacuum_analyze('public', 'boston_slots_temp')
+
+    if debug:
+        info("Creating debug slots")
+        db.query(bos.create_slots_for_debug.format(offset=LINE_OFFSET))
+        db.create_index('boston_slots_debug', 'pkid')
+        db.create_index('boston_slots_debug', 'geom', index_type='gist')
+        db.vacuum_analyze('public', 'boston_slots_debug')
+
+
 def cleanup_table():
     """
     Remove temporary tables
@@ -523,6 +619,8 @@ def run(cities=CITIES, osm=False, debug=False):
         process_newyork(debug)
     if 'seattle' in cities:
         process_seattle(debug)
+    if 'boston' in cities:
+        process_boston(debug)
 
     Logger.info("Shorten slots that intersect with roads or other slots")
     for x in cities:
