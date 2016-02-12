@@ -397,8 +397,7 @@ SELECT
             'code', t.code,
             'description', r.description,
             'address', name,
-            'season_start', r.season_start,
-            'season_end', r.season_end,
+            'periods', r.periods,
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
@@ -453,8 +452,7 @@ WITH tmp AS (
             'code', r.code,
             'description', r.description,
             'address', t.way_name,
-            'season_start', r.season_start,
-            'season_end', r.season_end,
+            'periods', r.periods,
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
@@ -517,8 +515,7 @@ SELECT
     , t.isleft
     , t.name as way_name
     , rt.description
-    , rt.season_start
-    , rt.season_end
+    , rt.periods
     , rt.time_max_parking
     , rt.time_start
     , rt.time_end

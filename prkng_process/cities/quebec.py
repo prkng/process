@@ -445,8 +445,7 @@ SELECT
             'code', t.code,
             'description', r.description,
             'address', name,
-            'season_start', r.season_start,
-            'season_end', r.season_end,
+            'periods', r.periods,
             'agenda', r.agenda,
             'time_max_parking', r.time_max_parking,
             'special_days', r.special_days,
@@ -508,8 +507,7 @@ WITH segments AS (
                 'code', z.code,
                 'description', z.description,
                 'address', g.way_name,
-                'season_start', z.season_start,
-                'season_end', z.season_end,
+                'periods', z.periods,
                 'agenda', z.agenda,
                 'time_max_parking', z.time_max_parking,
                 'special_days', z.special_days,
@@ -595,8 +593,7 @@ WITH exclusions AS (
                 'code', z.code,
                 'description', z.description,
                 'address', ur.way_name,
-                'season_start', z.season_start,
-                'season_end', z.season_end,
+                'periods', z.periods,
                 'agenda', z.agenda,
                 'time_max_parking', z.time_max_parking,
                 'special_days', z.special_days,
@@ -669,8 +666,7 @@ SELECT
     , t.isleft
     , t.name as way_name
     , rt.description
-    , rt.season_start
-    , rt.season_end
+    , rt.periods
     , rt.time_max_parking
     , rt.time_start
     , rt.time_end

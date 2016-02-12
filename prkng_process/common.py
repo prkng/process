@@ -5,8 +5,7 @@ from __future__ import unicode_literals
 rules_columns = (
     'code',
     'description',
-    'season_start',
-    'season_end',
+    'periods',
     'time_max_parking',
     'agenda',
     'special_days',
@@ -20,8 +19,7 @@ CREATE TABLE rules (
     id serial PRIMARY KEY
     , code varchar
     , description varchar
-    , season_start varchar DEFAULT ''
-    , season_end varchar DEFAULT ''
+    , periods varchar[][] DEFAULT ARRAY[ARRAY[]]
     , time_max_parking float DEFAULT 0.0
     , agenda jsonb
     , special_days varchar DEFAULT ''
@@ -34,8 +32,7 @@ get_rules_from_source = """
 SELECT
     code
     , description
-    , season_start
-    , season_end
+    , periods
     , time_max_parking
     , time_start
     , time_end
