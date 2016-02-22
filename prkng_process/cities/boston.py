@@ -17,6 +17,48 @@ CREATE TABLE boston_sign (
 """
 
 
+insert_sign = """
+WITH wholeroads AS (
+    SELECT min(StreetName) AS name, min(StreetNa_1) AS alt_name, ST_LineMerge(ST_Union(geom))
+    FROM boston_geobase
+    GROUP BY StreetList
+), substrings AS (
+    SELECT b.id, r.name, array_sort(array_agg(DISTINCT ST_Line_Locate_Point(r.geom, ST_Intersection(r.geom, s.geom)))) AS linepoints
+    FROM boston_sweep_sched b
+    JOIN wholeroads r ON (b.street = r.name OR b.street = r.alt_name)
+    JOIN boston_geobase s ON ST_DWithin(s.geom, r.geom, 1)
+    WHERE (b.from = s.StreetName OR b.from = s.StreetNa_1) OR (b.to = s.StreetName OR b.to = s.StreetNa_1)
+), linebufs AS (
+    SELECT s.id, ST_Buffer(ST_LineSubstring(r.geom, s.linepoints[0], s.linepoints[1]), 5, 'endcap=flat') AS geom
+    FROM substrings s
+    JOIN wholeroads r ON r.name = s.name
+), lines AS (
+    SELECT r.id, s.StreetName, s.RoadSegmen
+    FROM boston_geobase s
+    JOIN linebufs r ON ST_Contains(r.geom, s.geom)
+    GROUP BY r.id
+), linesides AS (
+    SELECT r.id, a.geom, r.RoadSegmen, r.geom AS road_geom,
+        ROW_NUMBER() OVER (PARTITION BY r.RoadSegmen ORDER BY ST_Distance(a.geom, r.geom))
+    FROM boston_addresses a
+    JOIN lines r ON upper(a.street_bod + ' ' + a.street_suf) = r.StreetName
+    JOIN boston_sweep_sched b ON r.id = b.id
+    WHERE (a.STREET_NUM % 2 = 0 AND b.side = 'even') OR (a.STREET_NUM % 2 = 1 AND b.side = 'odd')
+)
+INSERT INTO boston_sign (geom, roadsegment, distance, direction, code, description)
+SELECT
+    l.geom,
+    l.RoadSegmen,
+    ST_Distance(l.geom, ST_StartPoint(ST_LineMerge(l.road_geom))),
+    0,
+    r.code,
+    r.description
+FROM linesides l
+JOIN rules r ON r.code = ('BOS-SSWP-' || l.id)
+WHERE l.rank = 1
+"""
+
+
 # try to match osm ways with geobase
 match_roads_geobase = """
 DROP TABLE IF EXISTS boston_roads_geobase;

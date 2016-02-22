@@ -51,7 +51,7 @@ def group_rules(rules):
         results.append(singles(
             part.code,
             part.description,
-            part.periods,
+            ("{"+",".join(["{"+x+"}" for x in part.periods.split(";")])+"}") if part.periods else "{}",
             part.time_max_parking,
             dict(day_dict),
             part.special_days,

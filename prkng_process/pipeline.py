@@ -10,6 +10,7 @@ from .cities import montreal as mrl
 from .cities import quebec as qbc
 from .cities import newyork as nyc
 from .cities import seattle as sea
+from .cities import boston as bos
 from .database import PostgresWrapper
 from .filters import group_rules
 from .logger import Logger
@@ -521,8 +522,7 @@ def cleanup_table():
     Logger.info("Cleanup schema")
 
     # drop universal temp tables
-    for x in ["bad_intersection", "way_intersection", "roads", "signpost_onroad",
-            "permit_zones", "parking_lots_raw"]:
+    for x in ["bad_intersection", "way_intersection", "roads", "signpost_onroad", "parking_lots_raw"]:
         db.query("DROP TABLE IF EXISTS {}".format(x))
 
     # drop per-city temp tables

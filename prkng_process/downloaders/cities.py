@@ -628,13 +628,27 @@ class Boston(DataSource):
         self.name = 'Boston'
         self.city = 'boston'
 
-        self.url_roads_boston = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_35.zip"
+        self.url_roads_boston = "https://services.arcgis.com/sFnw0xNflSi8J0uh/arcgis/rest/services/Street_Centerlines/FeatureServer/0/query"
+        self.url_addr_boston = "http://gis.cityofboston.gov/arcgis/rest/services/SAM/Live_SAM_Address/MapServer/0/query"
         self.url_roads_cambridge = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_49.zip"
         self.url_roads_brookline = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_46.zip"
         self.url_roads_somerville = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_274.zip"
 
     def download(self):
-        for x in ["boston", "cambridge", "brookline", "somerville"]:
+        self.download_misc()
+        self.download_roads()
+
+    def download_misc(self):
+        Logger.info("Downloading Boston addresses data")
+        download_arcgis(self.url_addr_boston, "point", "SAM_ADDRESS_ID",
+            "/tmp/boston_address.geojson")
+
+    def download_roads(self):
+        Logger.info("Downloading Boston roads data (Boston)")
+        download_arcgis(self.url_roads_boston, "multilinestring", "RoadInvent",
+            "/tmp/boston_geobase.geojson")
+
+        for x in ["cambridge", "brookline", "somerville"]:
             Logger.info("Downloading Boston roads data ({})".format(x.capitalize()))
             url = getattr(self, 'url_roads_'+x)
             zfile = download_progress(url, os.path.basename(url), CONFIG['DOWNLOAD_DIRECTORY'])
@@ -659,14 +673,31 @@ class Boston(DataSource):
             shell=True
         )
 
-        for x in [self.roads_cambridge_shapefile, self.roads_brookline_shapefile,
-                self.roads_somerville_shapefile]:
-            subprocess.check_call(
-                'shp2pgsql -a -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_geobase | '
-                'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
-                .format(filename=x, **CONFIG),
-                shell=True
-            )
+        subprocess.check_call(
+            'shp2pgsql -d -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_metro_geobase | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=self.roads_cambridge_shapefile, **CONFIG),
+            shell=True
+        )
+        subprocess.check_call(
+            'shp2pgsql -a -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_metro_geobase | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=self.roads_brookline_shapefile, **CONFIG),
+            shell=True
+        )
+        subprocess.check_call(
+            'shp2pgsql -a -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_metro_geobase | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=self.roads_somerville_shapefile, **CONFIG),
+            shell=True
+        )
+
+        subprocess.check_call(
+            'shp2pgsql -d -g geom -W LATIN1 -I {filename} meters_boston | '
+            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
+            .format(filename=script('meters_boston.shp'), **CONFIG),
+            shell=True
+        )
 
     def load_rules(self):
         """
