@@ -437,7 +437,9 @@ def process_boston(debug=False):
     db.vacuum_analyze('public', 'rules')
 
     info("Matching OSM roads with geobase")
-    db.query(bos.match_roads_geobase)
+    db.query(bos.create_roads_geobase)
+    db.query(bos.match_roads_geobase.format(tbl="boston_geobase"))
+    db.query(bos.match_roads_geobase.format(tbl="boston_metro_geobase"))
     db.create_index('boston_roads_geobase', 'id')
     db.create_index('boston_roads_geobase', 'roadsegment')
     db.create_index('boston_roads_geobase', 'osm_id')
@@ -450,6 +452,7 @@ def process_boston(debug=False):
 
     info("Loading signs")
     db.query(bos.insert_sign)
+    db.query(bos.insert_sign_cambridge)
     db.create_index('boston_sign', 'geom', index_type='gist')
     db.create_index('boston_sign', 'direction')
     db.create_index('boston_sign', 'elevation')
@@ -461,6 +464,7 @@ def process_boston(debug=False):
     db.query(bos.insert_signpost)
     db.create_index('boston_signpost', 'geom', index_type='gist')
     db.create_index('boston_signpost', 'geobase_id')
+    db.query(bos.add_signposts_to_sign)
     db.vacuum_analyze('public', 'boston_signpost')
 
     info("Projecting signposts on road")
@@ -603,6 +607,9 @@ def run(cities=CITIES, osm=False, debug=False):
     db.query(common.create_parking_lots_raw.format(city="seattle"))
     insert_raw_lots("seattle", "lots_seattle.csv")
     insert_parking_lots("seattle")
+    db.query(common.create_parking_lots_raw.format(city="boston"))
+    insert_raw_lots("boston", "lots_boston.csv")
+    insert_parking_lots("boston")
     db.create_index('parking_lots', 'id')
     db.create_index('parking_lots', 'city')
     db.create_index('parking_lots', 'geom', index_type='gist')
@@ -632,7 +639,7 @@ def run(cities=CITIES, osm=False, debug=False):
         db.create_index(x+'_slots', 'id')
         db.create_index(x+'_slots', 'geom', index_type='gist')
         db.create_index(x+'_slots', 'rules', index_type='gin')
-        db.query(common.aggregate_like_slots.format(city=x))
+        db.query(common.aggregate_like_slots.format(city=x, within=3 if x == "seattle" else 0.1))
         db.query(common.create_client_data.format(city=x))
         db.vacuum_analyze('public', x+'_slots')
 

@@ -14,8 +14,8 @@ declare
     step double precision;
     res double precision;
 begin
-    pct := st_line_locate_point(line, porig);
-    pfrom := st_line_interpolate_point(line, pct);
+    pct := ST_LineLocatePoint(line, porig);
+    pfrom := ST_LineInterpolatePoint(line, pct);
     -- case of colinearity
     if st_distance(pfrom, porig) < 0.1 then return 0 ;end if;
     -- step is percentage per meter
@@ -24,9 +24,9 @@ begin
     if pct > 0.98 then
     -- if point is projected near the last point of the linestring
     pto := pfrom;
-    pfrom := st_line_interpolate_point(line, GREATEST(0, pct-step));
+    pfrom := ST_LineInterpolatePoint(line, GREATEST(0, pct-step));
     else
-        pto := st_line_interpolate_point(line, LEAST(1, pct+step));
+        pto := ST_LineInterpolatePoint(line, LEAST(1, pct+step));
     end if;
     -- calculate atan2
     res := sign(atan2(

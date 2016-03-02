@@ -10,6 +10,7 @@ CREATE TABLE boston_sign (
     , geom geometry(Point, 3857)
     , roadsegment integer
     , distance float
+    , signpost integer
     , direction smallint -- direction the rule applies
     , code varchar -- code of rule
     , description varchar -- description of rule
@@ -19,31 +20,52 @@ CREATE TABLE boston_sign (
 
 insert_sign = """
 WITH wholeroads AS (
-    SELECT min(StreetName) AS name, min(StreetNa_1) AS alt_name, ST_LineMerge(ST_Union(geom))
+    SELECT StreetList AS id, min(StreetName) AS name, min(StreetNa_1) AS alt_name,
+        ST_LineMerge(ST_Union(geom)) AS geom
     FROM boston_geobase
+    WHERE StreetName IS NOT NULL AND FacilityTy != 0
     GROUP BY StreetList
 ), substrings AS (
-    SELECT b.id, r.name, array_sort(array_agg(DISTINCT ST_Line_Locate_Point(r.geom, ST_Intersection(r.geom, s.geom)))) AS linepoints
+    SELECT b.id, r1.id AS r1id, r2.id AS r2id, (ST_Dump(ST_Split(r.geom, ST_Union(r1.geom, r2.geom)))).geom AS geom
     FROM boston_sweep_sched b
-    JOIN wholeroads r ON (b.street = r.name OR b.street = r.alt_name)
-    JOIN boston_geobase s ON ST_DWithin(s.geom, r.geom, 1)
-    WHERE (b.from = s.StreetName OR b.from = s.StreetNa_1) OR (b.to = s.StreetName OR b.to = s.StreetNa_1)
+    JOIN wholeroads r  ON (b.street = r.name OR b.street = r.alt_name)
+    JOIN wholeroads r1 ON (b.from_st = r1.name OR b.from_st = r1.alt_name) AND ST_Intersects(r.geom, r1.geom)
+    JOIN wholeroads r2 ON (b.to_st = r2.name OR b.to_st = r2.alt_name) AND ST_Intersects(r.geom, r2.geom)
+    WHERE (b.from_st != 'DEAD END' AND b.to_st != 'DEAD END')
+      AND ST_GeometryType(ST_Intersection(r.geom, r1.geom)) LIKE '%Point%'
+      AND ST_GeometryType(ST_Intersection(r.geom, r2.geom)) LIKE '%Point%'
+    UNION ALL
+    SELECT b.id, r1.id AS r1id, NULL AS r2id, (ST_Dump(ST_Split(r.geom, r1.geom))).geom AS geom
+    FROM boston_sweep_sched b
+    JOIN wholeroads r  ON (b.street = r.name OR b.street = r.alt_name)
+    JOIN wholeroads r1 ON ((b.from_st = r1.name OR b.from_st = r1.alt_name)
+                        OR (b.to_st = r1.name OR b.to_st = r1.alt_name)) AND ST_Intersects(r.geom, r1.geom)
+    WHERE (b.from_st = 'DEAD END' OR b.to_st = 'DEAD END')
+       AND ST_GeometryType(ST_Intersection(r.geom, r1.geom)) LIKE '%Point%'
 ), linebufs AS (
-    SELECT s.id, ST_Buffer(ST_LineSubstring(r.geom, s.linepoints[0], s.linepoints[1]), 5, 'endcap=flat') AS geom
-    FROM substrings s
-    JOIN wholeroads r ON r.name = s.name
+    SELECT r.id, ST_Buffer(r.geom, 5, 'endcap=flat') AS geom
+    FROM substrings r
+    JOIN wholeroads r1 ON r.r1id = r1.id
+    LEFT JOIN wholeroads r2 ON r.r2id IS NOT NULL AND r.r2id = r2.id
+    WHERE ST_GeometryType(r.geom) LIKE '%LineString%'
+      AND ST_DWithin(r.geom, r1.geom, 1)
+      AND ((r2id IS NOT NULL AND ST_DWithin(r.geom, r2.geom, 1))
+       OR (r2id IS NULL AND ((SELECT count(x.*) FROM boston_geobase x WHERE ST_DWithin(ST_StartPoint(r.geom), x.geom, 1)) = 1
+         OR (SELECT count(x.*) FROM boston_geobase x WHERE ST_DWithin(ST_EndPoint(r.geom), x.geom, 1)) = 1)))
 ), lines AS (
-    SELECT r.id, s.StreetName, s.RoadSegmen
-    FROM boston_geobase s
-    JOIN linebufs r ON ST_Contains(r.geom, s.geom)
-    GROUP BY r.id
+    SELECT r.id, s.StreetName, s.StreetNa_1, s.RoadSegmen, s.geom
+    FROM linebufs r
+    JOIN boston_geobase s ON ST_Contains(r.geom, s.geom)
 ), linesides AS (
-    SELECT r.id, a.geom, r.RoadSegmen, r.geom AS road_geom,
-        ROW_NUMBER() OVER (PARTITION BY r.RoadSegmen ORDER BY ST_Distance(a.geom, r.geom))
-    FROM boston_addresses a
-    JOIN lines r ON upper(a.street_bod + ' ' + a.street_suf) = r.StreetName
+    SELECT DISTINCT ON (r.RoadSegmen, round(a.street_n_1) % 2) r.id, a.geom, r.RoadSegmen, r.geom AS road_geom
+    FROM lines r
+    JOIN boston_address a ON ST_DWithin(r.geom, a.geom, 50)
+        AND (upper(a.street_bod || ' ' || a.street_ful) = r.StreetName
+          OR upper(a.street_bod || ' ' || a.street_ful) = r.StreetNa_1)
     JOIN boston_sweep_sched b ON r.id = b.id
-    WHERE (a.STREET_NUM % 2 = 0 AND b.side = 'even') OR (a.STREET_NUM % 2 = 1 AND b.side = 'odd')
+    WHERE (round(a.street_n_1) % 2 = 0 AND b.side = 'Even') OR (round(a.street_n_1) % 2 = 1 AND b.side = 'Odd')
+         OR (b.side IS NULL)
+    ORDER BY r.RoadSegmen, round(a.street_n_1) % 2, ST_Distance(a.geom, ST_LineInterpolatePoint(ST_LineMerge(r.geom), 0.5))
 )
 INSERT INTO boston_sign (geom, roadsegment, distance, direction, code, description)
 SELECT
@@ -55,21 +77,72 @@ SELECT
     r.description
 FROM linesides l
 JOIN rules r ON r.code = ('BOS-SSWP-' || l.id)
-WHERE l.rank = 1
+"""
+
+
+insert_sign_cambridge = """
+WITH stnames AS (
+    SELECT *,
+        (CASE WHEN substring(stnm from '(^[0-9]*)')::int % 2 = 0 THEN 'Even' ELSE 'Odd' END) AS side,
+        (CASE
+            WHEN substring(stname from 'St$') IS NOT NULL THEN upper(regexp_replace(stname, 'St$', 'Street'))
+            WHEN substring(stname from 'Ave$') IS NOT NULL THEN upper(regexp_replace(stname, 'Ave$', 'Avenue'))
+            WHEN substring(stname from 'Rd$') IS NOT NULL THEN upper(regexp_replace(stname, 'Rd$', 'Road'))
+            WHEN substring(stname from 'Pl$') IS NOT NULL THEN upper(regexp_replace(stname, 'Pl$', 'Place'))
+            WHEN substring(stname from 'Dr$') IS NOT NULL THEN upper(regexp_replace(stname, 'Dr$', 'Drive'))
+            WHEN substring(stname from 'Ct$') IS NOT NULL THEN upper(regexp_replace(stname, 'Ct$', 'Court'))
+            WHEN substring(stname from 'Ter$') IS NOT NULL THEN upper(regexp_replace(stname, 'Ter$', 'Terrace'))
+            WHEN substring(stname from 'Pkwy$') IS NOT NULL THEN upper(regexp_replace(stname, 'Pkwy$', 'Parkway'))
+            WHEN substring(stname from 'Pk$') IS NOT NULL THEN upper(regexp_replace(stname, 'Pk$', 'Park'))
+            WHEN substring(stname from 'Ln$') IS NOT NULL THEN upper(regexp_replace(stname, 'Ln$', 'Lane'))
+            WHEN substring(stname from 'Blvd$') IS NOT NULL THEN upper(regexp_replace(stname, 'Blvd$', 'Boulevard'))
+            WHEN substring(stname from 'Tpk$') IS NOT NULL THEN upper(regexp_replace(stname, 'Tpk$', 'Turnpike'))
+            WHEN substring(stname from 'Cir$') IS NOT NULL THEN upper(regexp_replace(stname, 'Cir$', 'Circle'))
+            WHEN substring(stname from 'Hwy$') IS NOT NULL THEN upper(regexp_replace(stname, 'Hwy$', 'Highway'))
+            WHEN substring(stname from 'St N$') IS NOT NULL THEN upper(regexp_replace(stname, 'St N$', 'Street North'))
+            WHEN substring(stname from 'Sq$') IS NOT NULL THEN upper(regexp_replace(stname, 'Sq$', 'Square'))
+            WHEN substring(stname from 'Aly$') IS NOT NULL THEN upper(regexp_replace(stname, 'Aly$', 'Alley'))
+            WHEN substring(stname from 'Ext$') IS NOT NULL THEN upper(regexp_replace(stname, 'Ext$', 'Extension'))
+            ELSE upper(stname)
+         END) AS realName
+    FROM cambridge_address
+), points AS (
+    SELECT DISTINCT ON (r.roadsegmen, a.side) substring(z.district from '^([A-Z])') AS district,
+        a.geom, a.side, r.roadsegmen, r.geom AS road_geom
+    FROM boston_metro_geobase r
+    JOIN stnames a ON r.mgis_town = 'CAMBRIDGE' AND ST_DWithin(r.geom, a.geom, 50) AND r.streetname = a.realName
+    JOIN cambridge_sweep_zones z ON ST_Intersects(z.geom, r.geom)
+    WHERE z.district IS NOT NULL AND z.type = 'RD-PAVED'
+    ORDER BY r.roadsegmen, a.side, ST_Length(ST_Intersection(r.geom, z.geom)) DESC,
+        ST_Distance(a.geom, ST_LineInterpolatePoint(ST_LineMerge(r.geom), 0.5))
+)
+INSERT INTO boston_sign (geom, roadsegment, distance, direction, code, description)
+SELECT
+    l.geom,
+    l.roadsegmen,
+    ST_Distance(l.geom, ST_StartPoint(ST_LineMerge(l.road_geom))),
+    0,
+    r.code,
+    r.description
+FROM points l
+JOIN rules r ON r.code = ('CMB-SSWP-' || l.district || '-' || l.side)
 """
 
 
 # try to match osm ways with geobase
-match_roads_geobase = """
+create_roads_geobase = """
 DROP TABLE IF EXISTS boston_roads_geobase;
 CREATE TABLE boston_roads_geobase (
     id integer
     , osm_id bigint
+    , city varchar
     , name varchar
     , roadsegment integer
     , geom geometry(Linestring, 3857)
 );
+"""
 
+match_roads_geobase = """
 WITH tmp AS (
     SELECT
         o.*
@@ -77,18 +150,20 @@ WITH tmp AS (
         , rank() OVER (
             PARTITION BY o.id ORDER BY
               ST_HausdorffDistance(o.geom, m.geom)
-              , levenshtein(o.name, m.street_nam)
+              , levenshtein(o.name, m.streetname)
               , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
           ) AS rank
     FROM roads o
-    JOIN boston_geobase m ON o.geom && ST_Expand(m.geom, 10)
+    JOIN {tbl} m ON o.geom && ST_Expand(m.geom, 10)
     WHERE ST_Contains(ST_Buffer(m.geom, 30), o.geom)
+        AND o.name != 'Boston Marathon Finish Line'
 )
 INSERT INTO boston_roads_geobase
 SELECT
     DISTINCT ON (id)
     id
     , osm_id
+    , 'boston'
     , name
     , roadsegment
     , geom
@@ -104,20 +179,22 @@ WITH tmp AS (
           , rank() OVER (
               PARTITION BY o.id ORDER BY
                 ST_HausdorffDistance(o.geom, m.geom)
-                , levenshtein(o.name, m.street_nam)
+                , levenshtein(o.name, m.streetname)
                 , abs(ST_Length(o.geom) - ST_Length(m.geom)) / greatest(ST_Length(o.geom), ST_Length(m.geom))
             ) AS rank
       FROM roads o
       LEFT JOIN boston_roads_geobase orig ON orig.id = o.id
-      JOIN boston_geobase m ON o.geom && ST_Expand(m.geom, 10)
+      JOIN {tbl} m ON o.geom && ST_Expand(m.geom, 10)
       WHERE ST_Contains(ST_Buffer(o.geom, 30), m.geom)
         AND orig.id IS NULL
+        AND o.name != 'Boston Marathon Finish Line'
 )
 INSERT INTO boston_roads_geobase
 SELECT
     DISTINCT ON (id)
     id
     , osm_id
+    , 'boston'
     , name
     , roadsegment
     , geom
@@ -158,7 +235,7 @@ CREATE TABLE boston_signpost_onroad AS
     SELECT
         DISTINCT ON (sp.id) sp.id  -- hack to prevent duplicata
         , s.id AS road_id
-        , ST_ClosestPoint(s.geom, sp.geom)::geometry(point, 3857) AS geom
+        , ST_LineInterpolatePoint(s.geom, 0.5) AS geom
         , ST_isLeft(s.geom, sp.geom) AS isleft
     FROM boston_signpost sp
     JOIN boston_roads_geobase s ON sp.geobase_id = s.roadsegment
@@ -194,6 +271,18 @@ CREATE TABLE boston_signposts_orphans AS
 FROM tmp t
 JOIN boston_signpost s using(id)
 )
+"""
+
+add_signposts_to_sign = """
+WITH tmp AS (
+    SELECT DISTINCT s.id AS sign_id, p.id AS post_id
+    FROM boston_sign s
+    JOIN boston_signpost p ON s.id = ANY(p.signs)
+)
+UPDATE boston_sign s
+SET signpost = tmp.post_id
+FROM tmp
+WHERE s.id = tmp.sign_id;
 """
 
 
@@ -236,7 +325,7 @@ UNION ALL
 UNION ALL
     SELECT
         rid
-        , st_line_locate_point(rgeom, pgeom) as position
+        , ST_LineLocatePoint(rgeom, pgeom) as position
         , pid as signpost
     FROM selected_roads
 ), loc_with_idx as (
@@ -252,7 +341,7 @@ SELECT
     ARRAY[loc1.signpost, loc2.signpost]
     , w.id
     , loc1.position as position
-    , st_line_substring(w.geom, loc1.position, loc2.position) as geom
+    , ST_LineSubstring(w.geom, loc1.position, loc2.position) as geom
 FROM loc_with_idx loc1
 JOIN loc_with_idx loc2 using (rid)
 JOIN boston_roads_geobase w on w.id = loc1.rid
@@ -365,6 +454,49 @@ SELECT
     , geom
     , way_name
 FROM selection
+"""
+
+overlay_paid_rules = """
+WITH tmp AS (
+    SELECT DISTINCT ON (foo.id)
+        b.gid AS id,
+        1.0 AS rate,
+        (CASE WHEN b.city = 'boston' THEN 'BOS-PAID' WHEN b.city = 'cambridge' THEN 'CMB-PAID'
+            ELSE NULL END) AS rule,
+        foo.id AS slot_id,
+        array_agg(foo.rules) AS orig_rules
+    FROM meters_boston b, boston_roads_geobase r,
+        (
+            SELECT id, rid, geom, jsonb_array_elements(rules) AS rules
+            FROM boston_slots_temp
+            GROUP BY id
+        ) foo
+    WHERE r.roadsegment = b.roadsegmen
+        AND r.id = foo.rid
+        AND ST_DWithin(foo.geom, b.geom, 12)
+    GROUP BY b.gid, b.geom, foo.id, foo.geom
+    ORDER BY foo.id, ST_Distance(foo.geom, b.geom)
+), new_slots AS (
+    SELECT t.slot_id, array_to_json(array_cat(t.orig_rules, array_agg(
+        distinct json_build_object(
+            'code', r.code,
+            'description', r.description,
+            'periods', r.periods,
+            'agenda', r.agenda,
+            'time_max_parking', r.time_max_parking,
+            'special_days', r.special_days,
+            'restrict_types', r.restrict_types,
+            'paid_hourly_rate', 1.00
+        )::jsonb)
+    ))::jsonb AS rules
+    FROM tmp t
+    JOIN rules r ON r.code = t.rule
+    GROUP BY t.slot_id, t.orig_rules
+)
+UPDATE boston_slots_temp s
+SET rules = n.rules
+FROM new_slots n
+WHERE n.slot_id = s.id
 """
 
 

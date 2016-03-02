@@ -629,10 +629,14 @@ class Boston(DataSource):
         self.city = 'boston'
 
         self.url_roads_boston = "https://services.arcgis.com/sFnw0xNflSi8J0uh/arcgis/rest/services/Street_Centerlines/FeatureServer/0/query"
-        self.url_addr_boston = "http://gis.cityofboston.gov/arcgis/rest/services/SAM/Live_SAM_Address/MapServer/0/query"
         self.url_roads_cambridge = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_49.zip"
         self.url_roads_brookline = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_46.zip"
         self.url_roads_somerville = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_274.zip"
+
+        self.url_addr_boston = "http://gis.cityofboston.gov/arcgis/rest/services/SAM/Live_SAM_Address/MapServer/0/query"
+        self.url_addr_cambridge = "https://github.com/cambridgegis/cambridgegis_data/raw/master/Address/Address_Points/ADDRESS_AddressPoints.geojson"
+
+        self.url_zones_cambridge = "https://github.com/cambridgegis/cambridgegis_data/raw/master/DPW/Street_Sweeping_Roads/DPW_StreetSweepingRoads.geojson"
 
     def download(self):
         self.download_misc()
@@ -643,12 +647,24 @@ class Boston(DataSource):
         download_arcgis(self.url_addr_boston, "point", "SAM_ADDRESS_ID",
             "/tmp/boston_address.geojson")
 
+        Logger.info("Downloading Cambridge addresses data")
+        download_progress(self.url_addr_cambridge, 'cambridge_address.geojson',
+            CONFIG['DOWNLOAD_DIRECTORY'])
+
+        Logger.info("Downloading Cambridge sweeping zone data")
+        download_progress(self.url_zones_cambridge, 'cambridge_zones.geojson',
+            CONFIG['DOWNLOAD_DIRECTORY'])
+
     def download_roads(self):
         Logger.info("Downloading Boston roads data (Boston)")
         download_arcgis(self.url_roads_boston, "multilinestring", "RoadInvent",
             "/tmp/boston_geobase.geojson")
 
-        for x in ["cambridge", "brookline", "somerville"]:
+        Logger.info("Downloading Boston roads data (Cambridge)")
+        download_progress(self.url_roads_cambridge, 'cambridge_geobase.geojson',
+            CONFIG['DOWNLOAD_DIRECTORY'])
+
+        for x in ["brookline", "somerville"]:
             Logger.info("Downloading Boston roads data ({})".format(x.capitalize()))
             url = getattr(self, 'url_roads_'+x)
             zfile = download_progress(url, os.path.basename(url), CONFIG['DOWNLOAD_DIRECTORY'])
@@ -693,11 +709,44 @@ class Boston(DataSource):
         )
 
         subprocess.check_call(
-            'shp2pgsql -d -g geom -W LATIN1 -I {filename} meters_boston | '
+            'shp2pgsql -d -g geom -s 3857 -W LATIN1 -I {filename} meters_boston | '
             'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
             .format(filename=script('meters_boston.shp'), **CONFIG),
             shell=True
         )
+
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt point -s_srs EPSG:2249 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln boston_address {}'.format("/tmp/boston_address.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "boston_address")
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt point -s_srs EPSG:4326 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln cambridge_address {}'.format("/tmp/cambridge_address.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "cambridge_address")
+        subprocess.check_call(
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt multipolygon -s_srs EPSG:4326 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln cambridge_sweep_zones {}'.format("/tmp/cambridge_zones.geojson", **CONFIG),
+            shell=True
+        )
+        self.db.vacuum_analyze("public", "cambridge_sweep_zones")
+
+        Logger.info("Loading street sweeping data for {}".format(self.name))
+        filename = script("data_boston.csv")
+        Logger.debug("loading file '%s' with script '%s'" %
+                     (filename, script('boston_load_rules.sql')))
+        with open(script('boston_load_data.sql'), 'rb') as infile:
+            self.db.query(infile.read().format(filename))
+            self.db.vacuum_analyze("public", "boston_sweep_sched")
 
     def load_rules(self):
         """
@@ -722,6 +771,9 @@ class Boston(DataSource):
             """WITH tmp AS (
                 SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
                 FROM boston_geobase
-            ) select st_ymin(geom), st_xmin(geom), st_ymax(geom), st_xmax(geom) from tmp
+                UNION ALL
+                SELECT st_transform(st_envelope(st_collect(geom)), 4326) as geom
+                FROM boston_metro_geobase
+            ) select min(st_ymin(geom)), min(st_xmin(geom)), max(st_ymax(geom)), max(st_xmax(geom)) from tmp
             """)[0]
         return res

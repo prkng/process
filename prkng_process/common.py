@@ -19,7 +19,7 @@ CREATE TABLE rules (
     id serial PRIMARY KEY
     , code varchar
     , description varchar
-    , periods varchar[][] DEFAULT ARRAY[ARRAY[]]
+    , periods varchar[][] DEFAULT ARRAY[ARRAY[]]::varchar[]
     , time_max_parking float DEFAULT 0.0
     , agenda jsonb
     , special_days varchar DEFAULT ''
@@ -182,7 +182,7 @@ BEGIN
     SELECT id FROM slots s
       WHERE slot.rid = s.rid
         AND slot.rules = s.rules
-        AND ST_DWithin(slot.geom, s.geom, 0.1)
+        AND ST_DWithin(slot.geom, s.geom, {within})
       LIMIT 1 INTO id_match;
 
     IF id_match IS NULL THEN
@@ -190,7 +190,7 @@ BEGIN
         ('{city}', slot.rid, ARRAY[slot.signposts], slot.rules, slot.geom, slot.way_name);
     ELSE
       UPDATE slots SET geom =
-        (CASE WHEN ST_DWithin(ST_StartPoint(slot.geom), ST_EndPoint(geom), 0.5)
+        (CASE WHEN ST_DWithin(ST_StartPoint(slot.geom), ST_EndPoint(geom), {within})
             THEN ST_MakeLine(geom, slot.geom)
             ELSE ST_MakeLine(slot.geom, geom)
         END),
