@@ -660,11 +660,7 @@ class Boston(DataSource):
         download_arcgis(self.url_roads_boston, "multilinestring", "RoadInvent",
             "/tmp/boston_geobase.geojson")
 
-        Logger.info("Downloading Boston roads data (Cambridge)")
-        download_progress(self.url_roads_cambridge, 'cambridge_geobase.geojson',
-            CONFIG['DOWNLOAD_DIRECTORY'])
-
-        for x in ["brookline", "somerville"]:
+        for x in ["cambridge", "brookline", "somerville"]:
             Logger.info("Downloading Boston roads data ({})".format(x.capitalize()))
             url = getattr(self, 'url_roads_'+x)
             zfile = download_progress(url, os.path.basename(url), CONFIG['DOWNLOAD_DIRECTORY'])
@@ -683,9 +679,10 @@ class Boston(DataSource):
         Loads data into database
         """
         subprocess.check_call(
-            'shp2pgsql -d -g geom -s 26986:3857 -W LATIN1 -I {filename} boston_geobase | '
-            'psql -q -d {PG_DATABASE} -h {PG_HOST} -U {PG_USERNAME} -p {PG_PORT}'
-            .format(filename=self.roads_boston_shapefile, **CONFIG),
+            'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
+            'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
+            '-nlt multilinestring -s_srs EPSG:2249 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nln boston_geobase {}'.format("/tmp/boston_geobase.geojson", **CONFIG),
             shell=True
         )
 
