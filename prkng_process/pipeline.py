@@ -14,6 +14,7 @@ from .cities import boston as bos
 from .database import PostgresWrapper
 from .filters import group_rules
 from .logger import Logger
+from .utils import pretty_time, tstr_to_float
 
 
 # distance from road to slot
@@ -856,7 +857,7 @@ def insert_dynamic_rules_seattle():
             paid_rules.append(_dynrule(x, "SUN", start, end, 9))
         if x[32]:
             # peak hour restriction
-            insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
+            insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY[{}]::varchar[], '{}', ARRAY{}::varchar[])"
             code, agenda = "SEA-PAID-{}-10".format(x[0]), {str(y): [] for y in range(1,8)}
             for z in x[32].split(" "):
                 for y in range(1,6):
@@ -864,7 +865,7 @@ def insert_dynamic_rules_seattle():
                         tstr_to_float(z.split("-")[1])])
             desc = "PEAK HOUR NO PARKING WEEKDAYS {}".format(x[32])
             paid_rules.append(insert_qry.format(code, desc, json.dumps(agenda), "NULL",
-                ["peak_hour"], "", x[1]))
+                "'peak_hour'", "", x[1]))
 
     db.query("""
         INSERT INTO rules (code, description, agenda, time_max_parking, restrict_types, permit_no)
@@ -880,8 +881,8 @@ def insert_dynamic_rules_seattle():
 
 
 def _dynrule(x, per, start, end, count):
-    insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
-    code, agenda = "SEA-PAID-{}-{}".format((x[0], count)), {str(y): [] for y in range(1,8)}
+    insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY[{}]::varchar[], '{}', ARRAY{}::varchar[])"
+    code, agenda = "SEA-PAID-{}-{}".format(x[0], count), {str(y): [] for y in range(1,8)}
     if per == "MON-FRI":
         for y in range(1,6):
             agenda[str(y)].append([float(start) / 60.0, round(float(end) / 60.0)])
@@ -890,4 +891,4 @@ def _dynrule(x, per, start, end, count):
     desc = "PAID PARKING {}-{} {} ${}/hr".format(pretty_time(start), pretty_time(end), per,
         "{0:.2f}".format(float(x[19 + count])))
     return insert_qry.format(code, desc, json.dumps(agenda), int(x[29]) if x[29] else "NULL",
-        ['paid'] + (['permit'] if x[30] else []), x[31] if x[31] else "", x[1])
+        "'paid'" + (",'permit'" if x[30] else ""), x[31] if x[31] else "", x[1])

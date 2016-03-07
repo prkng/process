@@ -12,7 +12,7 @@ def rules():
         'id', 'code', 'description', 'periods', 'time_max_parking',
         'time_start', 'time_end', 'time_duration',
         'lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim', 'daily',
-        'special_days', 'restrict_typ', 'permit_no'
+        'special_days', 'restrict_types', 'permit_no'
     ))
 
     return [
@@ -34,7 +34,7 @@ def rules():
             dim=None,
             daily=1.0,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
@@ -55,7 +55,7 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
@@ -76,7 +76,7 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
@@ -97,7 +97,7 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
@@ -118,7 +118,7 @@ def rules():
             dim=None,
             daily=1.0,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         )]
 

@@ -93,7 +93,7 @@ CREATE TABLE newyork_roads_geobase (
 WITH tmp AS (
     SELECT
         o.*
-        , m.b5_sc::int AS b5_sc
+        , m.b5_sc::int AS b5sc
         , m.physicalid::int
         , (CASE m.boroughcod::int
             WHEN 1 THEN 'M' -- Manhattan
@@ -131,7 +131,7 @@ WHERE rank = 1;
 WITH tmp AS (
       SELECT
           o.*
-          , m.b5_sc::int AS b5_sc
+          , m.b5_sc::int AS b5sc
           , m.physicalid::int
           , (CASE m.boroughcod::int
               WHEN 1 THEN 'M' -- Manhattan
