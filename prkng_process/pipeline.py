@@ -10,14 +10,16 @@ from .cities import montreal as mrl
 from .cities import quebec as qbc
 from .cities import newyork as nyc
 from .cities import seattle as sea
+from .cities import boston as bos
 from .database import PostgresWrapper
 from .filters import group_rules
 from .logger import Logger
+from .utils import pretty_time, tstr_to_float
 
 
 # distance from road to slot
 LINE_OFFSET = 6
-CITIES = ["montreal", "quebec", "newyork", "seattle"]
+CITIES = ["montreal", "quebec", "newyork", "seattle", "boston"]
 db = PostgresWrapper(
     "host='{PG_HOST}' port={PG_PORT} dbname={PG_DATABASE} "
     "user={PG_USERNAME} password={PG_PASSWORD} ".format(**CONFIG))
@@ -418,6 +420,105 @@ def process_seattle(debug=False):
         db.vacuum_analyze('public', 'seattle_slots_debug')
 
 
+def process_boston(debug=False):
+    """
+    process boston data and generate parking slots
+    """
+    def info(msg):
+        return Logger.info("Boston: {}".format(msg))
+
+    def debug(msg):
+        return Logger.debug("Boston: {}".format(msg))
+
+    def warning(msg):
+        return Logger.warning("Boston: {}".format(msg))
+
+    debug('Loading and translating rules')
+    insert_rules('boston_rules_translation')
+    db.vacuum_analyze('public', 'rules')
+
+    info("Matching OSM roads with geobase")
+    db.query(bos.create_roads_geobase)
+    db.query(bos.match_roads_geobase.format(tbl="boston_geobase"))
+    db.query(bos.match_roads_geobase.format(tbl="boston_metro_geobase"))
+    db.create_index('boston_roads_geobase', 'id')
+    db.create_index('boston_roads_geobase', 'roadsegment')
+    db.create_index('boston_roads_geobase', 'osm_id')
+    db.create_index('boston_roads_geobase', 'name')
+    db.create_index('boston_roads_geobase', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_roads_geobase')
+
+    info("Creating sign table")
+    db.query(bos.create_sign)
+
+    info("Loading signs")
+    db.query(bos.insert_sign)
+    db.query(bos.insert_sign_cambridge)
+    db.create_index('boston_sign', 'geom', index_type='gist')
+    db.create_index('boston_sign', 'direction')
+    db.create_index('boston_sign', 'signpost')
+    db.vacuum_analyze('public', 'boston_sign')
+
+    info("Creating sign posts")
+    db.query(bos.create_signpost)
+    db.query(bos.insert_signpost)
+    db.create_index('boston_signpost', 'geom', index_type='gist')
+    db.create_index('boston_signpost', 'geobase_id')
+    db.query(bos.add_signposts_to_sign)
+    db.vacuum_analyze('public', 'boston_signpost')
+
+    info("Projecting signposts on road")
+    duplicates = db.query(bos.project_signposts)
+    if duplicates:
+        warning("Duplicates found for projected signposts : {}"
+                .format(str(duplicates)))
+
+    db.create_index('boston_signpost_onroad', 'id')
+    db.create_index('boston_signpost_onroad', 'road_id')
+    db.create_index('boston_signpost_onroad', 'isleft')
+    db.create_index('boston_signpost_onroad', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_signpost_onroad')
+
+    percent, total = db.query(bos.count_signpost_projected)[0]
+
+    if percent < 100:
+        warning("Only {:.0f}% of signposts have been bound to a road. Total is {}"
+                .format(percent, total))
+        db.query(bos.generate_signposts_orphans)
+        info("Table 'boston_signpost_orphans' has been generated to check for orphans")
+
+    info("Creating slots between signposts")
+    db.query(bos.create_slots_likely)
+    db.query(bos.insert_slots_likely.format(isleft=1))
+    db.query(bos.insert_slots_likely.format(isleft=-1))
+    db.create_index('boston_slots_likely', 'id')
+    db.create_index('boston_slots_likely', 'signposts', index_type='gin')
+    db.create_index('boston_slots_likely', 'geom', index_type='gist')
+    db.vacuum_analyze('public', 'boston_slots_likely')
+
+    db.query(bos.create_nextpoints_for_signposts)
+    db.create_index('boston_nextpoints', 'id')
+    db.create_index('boston_nextpoints', 'slot_id')
+    db.create_index('boston_nextpoints', 'direction')
+    db.vacuum_analyze('public', 'boston_nextpoints')
+
+    db.create_index('boston_slots_temp', 'id')
+    db.create_index('boston_slots_temp', 'geom', index_type='gist')
+    db.create_index('boston_slots_temp', 'rules', index_type='gin')
+    db.query(bos.insert_slots_temp.format(offset=LINE_OFFSET))
+
+    info("Creating and overlaying paid slots")
+    db.query(bos.overlay_paid_rules)
+    db.vacuum_analyze('public', 'boston_slots_temp')
+
+    if debug:
+        info("Creating debug slots")
+        db.query(bos.create_slots_for_debug.format(offset=LINE_OFFSET))
+        db.create_index('boston_slots_debug', 'pkid')
+        db.create_index('boston_slots_debug', 'geom', index_type='gist')
+        db.vacuum_analyze('public', 'boston_slots_debug')
+
+
 def cleanup_table():
     """
     Remove temporary tables
@@ -425,8 +526,7 @@ def cleanup_table():
     Logger.info("Cleanup schema")
 
     # drop universal temp tables
-    for x in ["bad_intersection", "way_intersection", "roads", "signpost_onroad",
-            "permit_zones", "parking_lots_raw"]:
+    for x in ["bad_intersection", "way_intersection", "roads", "signpost_onroad", "parking_lots_raw"]:
         db.query("DROP TABLE IF EXISTS {}".format(x))
 
     # drop per-city temp tables
@@ -507,6 +607,9 @@ def run(cities=CITIES, osm=False, debug=False):
     db.query(common.create_parking_lots_raw.format(city="seattle"))
     insert_raw_lots("seattle", "lots_seattle.csv")
     insert_parking_lots("seattle")
+    db.query(common.create_parking_lots_raw.format(city="boston"))
+    insert_raw_lots("boston", "lots_boston.csv")
+    insert_parking_lots("boston")
     db.create_index('parking_lots', 'id')
     db.create_index('parking_lots', 'city')
     db.create_index('parking_lots', 'geom', index_type='gist')
@@ -523,6 +626,8 @@ def run(cities=CITIES, osm=False, debug=False):
         process_newyork(debug)
     if 'seattle' in cities:
         process_seattle(debug)
+    if 'boston' in cities:
+        process_boston(debug)
 
     Logger.info("Shorten slots that intersect with roads or other slots")
     for x in cities:
@@ -534,7 +639,7 @@ def run(cities=CITIES, osm=False, debug=False):
         db.create_index(x+'_slots', 'id')
         db.create_index(x+'_slots', 'geom', index_type='gist')
         db.create_index(x+'_slots', 'rules', index_type='gin')
-        db.query(common.aggregate_like_slots.format(city=x))
+        db.query(common.aggregate_like_slots.format(city=x, within=3 if x == "seattle" else 0.1))
         db.query(common.create_client_data.format(city=x))
         db.vacuum_analyze('public', x+'_slots')
 
@@ -751,7 +856,7 @@ def insert_dynamic_rules_seattle():
             paid_rules.append(_dynrule(x, "SUN", start, end, 9))
         if x[32]:
             # peak hour restriction
-            insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
+            insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY[{}]::varchar[], '{}', ARRAY{}::varchar[])"
             code, agenda = "SEA-PAID-{}-10".format(x[0]), {str(y): [] for y in range(1,8)}
             for z in x[32].split(" "):
                 for y in range(1,6):
@@ -759,7 +864,7 @@ def insert_dynamic_rules_seattle():
                         tstr_to_float(z.split("-")[1])])
             desc = "PEAK HOUR NO PARKING WEEKDAYS {}".format(x[32])
             paid_rules.append(insert_qry.format(code, desc, json.dumps(agenda), "NULL",
-                ["peak_hour"], "", x[1]))
+                "'peak_hour'", "", x[1]))
 
     db.query("""
         INSERT INTO rules (code, description, agenda, time_max_parking, restrict_types, permit_no)
@@ -775,8 +880,8 @@ def insert_dynamic_rules_seattle():
 
 
 def _dynrule(x, per, start, end, count):
-    insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY{}::varchar[], '{}', ARRAY{}::varchar[])"
-    code, agenda = "SEA-PAID-{}-{}".format((x[0], count)), {str(y): [] for y in range(1,8)}
+    insert_qry = "('{}', '{}', '{}'::jsonb, {}, ARRAY[{}]::varchar[], '{}', ARRAY{}::varchar[])"
+    code, agenda = "SEA-PAID-{}-{}".format(x[0], count), {str(y): [] for y in range(1,8)}
     if per == "MON-FRI":
         for y in range(1,6):
             agenda[str(y)].append([float(start) / 60.0, round(float(end) / 60.0)])
@@ -785,4 +890,4 @@ def _dynrule(x, per, start, end, count):
     desc = "PAID PARKING {}-{} {} ${}/hr".format(pretty_time(start), pretty_time(end), per,
         "{0:.2f}".format(float(x[19 + count])))
     return insert_qry.format(code, desc, json.dumps(agenda), int(x[29]) if x[29] else "NULL",
-        ['paid'] + (['permit'] if x[30] else []), x[31] if x[31] else "", x[1])
+        "'paid'" + (",'permit'" if x[30] else ""), x[31] if x[31] else "", x[1])

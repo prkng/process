@@ -9,14 +9,14 @@ def group_rules(rules):
     parking time for each day
     """
     singles = namedtuple('singles', (
-        'code', 'description', 'season_start', 'season_end',
-        'time_max_parking', 'agenda', 'special_days', 'restrict_types', 'permit_no'
+        'code', 'description', 'periods', 'time_max_parking', 'agenda',
+        'special_days', 'restrict_types', 'permit_no'
     ))
 
     results = []
     days = ('lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim')
 
-    for code, group in groupby(rules, lambda x: (x.code, x.season_start, x.season_end, x.time_max_parking)):
+    for code, group in groupby(rules, lambda x: (x.code, x.periods, x.time_max_parking)):
 
         day_dict = defaultdict(list)
 
@@ -51,8 +51,7 @@ def group_rules(rules):
         results.append(singles(
             part.code,
             part.description,
-            part.season_start,
-            part.season_end,
+            ("{"+",".join(["{"+x+"}" for x in part.periods.split(";")])+"}") if part.periods else "{}",
             part.time_max_parking,
             dict(day_dict),
             part.special_days,

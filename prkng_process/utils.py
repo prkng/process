@@ -17,6 +17,8 @@ def download_progress(url, filename, directory, ua=False):
     :param url: resource to download
     :param filename: destination filename
     :param directory: destination directory
+    :param ua: True to use a neutral user agent (bool)
+    :returns: Path to file
     """
     req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'} if ua else {}, stream=True)
 
@@ -56,6 +58,7 @@ def download_arcgis(url, gtype, pkey, filename):
     :param gtype: geometry type
     :param pkey: the primary key for the data to download
     :param filename: destination filename (full path)
+    :returns: Path to file
     """
 
     features = []
@@ -100,25 +103,30 @@ def pretty_time(mins):
     Convert time from minutes to 12-hour string with AM/PM.
 
     :param mins: minutes (integer)
+    :returns: Time string like: '8:00AM'
     """
-    return "{}{}".format(((y / 60 + ":" + y % 60), "AM" if y < 720 else "PM"))
+    return "{}{}".format((str(mins / 60) + ":" + str(mins % 60)), ("AM" if mins < 720 else "PM"))
 
 def tstr_to_float(tstr):
     """
     Convert time from 12-hour string (with AM/PM) to agenda-compatible float.
 
     :param tstr: 12-hour time string
+    :returns: Float like: 8.0 for '8:00AM'
     """
     afloat = float(tstr.rstrip("APM").split(":")[0])
     if "PM" in tstr and tstr.split(":")[0] != "12":
         afloat += 12.0
-    if ":" in mins:
+    if ":" in tstr:
         afloat += float(tstr.rstrip("APM").split(":")[1][0:2]) / 60
     return afloat
 
 def can_be_int(data):
     """
     Simply tells you if an item (string, etc) could potentially be an integer.
+
+    :param data: string
+    :returns: True if param can be an integer (bool)
     """
     try:
         int(data)
@@ -127,5 +135,10 @@ def can_be_int(data):
         return False
 
 def random_string(length=40):
-    """Create a random alphanumeric string."""
+    """
+    Create a randomish alphanumeric string.
+
+    :param length: length of the string to generate, default 40 (int)
+    :returns: randomish string (str)
+    """
     return hashlib.sha1(str(random.random())).hexdigest()[0:length]

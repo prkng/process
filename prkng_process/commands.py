@@ -20,7 +20,8 @@ def export():
     """
     Export processed data tables to file
     """
-    tables = ["montreal_slots", "quebec_slots", "newyork_slots", "seattle_slots", "cities", "city_assets", "parking_lots", "rules", "permits"]
+    tables = ["montreal_slots", "quebec_slots", "newyork_slots", "seattle_slots", "boston_slots",
+        "cities", "city_assets", "parking_lots", "rules", "permits"]
 
     Logger.info('Exporting processed tables...')
     export_dir = os.path.join(os.path.dirname(os.environ["PRKNG_SETTINGS"]), 'export')
@@ -72,8 +73,7 @@ def update_areas():
 
 
 @click.command()
-@click.option('--city', default='montreal,quebec,newyork',
-    help='A specific city (or comma-separated list of cities) to process data for')
+@click.option('--city', help='A specific city (or comma-separated list of cities) to process data for')
 @click.option('--osm', default=True,
     help='Reprocess OSM roads/map data')
 @click.option('--debug', default=False,
@@ -83,7 +83,10 @@ def process(city, osm, debug):
     Process data and create the target tables
     """
     from . import pipeline
-    pipeline.run(city.split(","), osm, debug)
+    if city:
+        pipeline.run(city.split(","), osm, debug)
+    else:
+        pipeline.run(osm=osm, debug=debug)
 
 
 main.add_command(export)

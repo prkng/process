@@ -9,10 +9,10 @@ from ..filters import split_time_range, group_rules
 @pytest.fixture(scope="module")
 def rules():
     rule = namedtuple('rule', (
-        'id', 'code', 'description', 'season_start', 'season_end',
-        'time_max_parking', 'time_start', 'time_end', 'time_duration',
+        'id', 'code', 'description', 'periods', 'time_max_parking',
+        'time_start', 'time_end', 'time_duration',
         'lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim', 'daily',
-        'special_days', 'restrict_typ', 'permit_no'
+        'special_days', 'restrict_types', 'permit_no'
     ))
 
     return [
@@ -20,8 +20,7 @@ def rules():
             id=1919,
             code='PX-MN',
             description='PANONCEAU 1 MAI AU 1 NOV.',
-            season_start='05-01',
-            season_end='11-01',
+            periods=[['05-01','11-01']],
             time_max_parking=None,
             time_start=None,
             time_end=None,
@@ -35,15 +34,14 @@ def rules():
             dim=None,
             daily=1.0,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
             id=9,
             code='SLR-ST-105',
             description='8H À 12H MAR JEU 13H À 17H LUN MER VEN',
-            season_start=None,
-            season_end=None,
+            periods=[],
             time_max_parking=None,
             time_start=13.0,
             time_end=17.0,
@@ -57,15 +55,14 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
             id=10,
             code='SLR-ST-105',
             description='8H À 12H MAR JEU 13H À 17H LUN MER VEN',
-            season_start=None,
-            season_end=None,
+            periods=[],
             time_max_parking=None,
             time_start=8.0,
             time_end=12.0,
@@ -79,15 +76,14 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
             id=1672,
             code='OUT-SDX-10',
             description='\\P EXCEPTE 8h - 12h LUNDI 1er AVRIL - 30 NOV',
-            season_start='04-01',
-            season_end='11-30',
+            periods=[['04-01','11-30']],
             time_max_parking=None,
             time_start=12.0,
             time_end=None,
@@ -101,15 +97,14 @@ def rules():
             dim=None,
             daily=None,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         ),
         rule(
             id=443,
             code='SD-TT',
             description='\\P EN TOUT TEMPS',
-            season_start=None,
-            season_end=None,
+            periods=[],
             time_max_parking=None,
             time_start=0.0,
             time_end=None,
@@ -123,7 +118,7 @@ def rules():
             dim=None,
             daily=1.0,
             special_days=None,
-            restrict_typ=None,
+            restrict_types=[],
             permit_no=None
         )]
 

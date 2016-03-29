@@ -1,2 +1,6 @@
 -e .
 boto==2.38.0
+sphinx==1.2.3
+pygments==2.0.1
+docutils==0.12
+alabaster==0.7.3
