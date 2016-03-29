@@ -633,7 +633,7 @@ class Boston(DataSource):
         self.url_roads_brookline = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_46.zip"
         self.url_roads_somerville = "http://wsgw.mass.gov/data/gispub/shape/eotroads/eotroads_274.zip"
 
-        self.url_addr_boston = "http://gis.cityofboston.gov/arcgis/rest/services/SAM/Live_SAM_Address/MapServer/0/query"
+        self.url_addr_boston = "http://bostonopendata.boston.opendata.arcgis.com/datasets/b6bffcace320448d96bb84eabb8a075f_0.geojson"
         self.url_addr_cambridge = "https://github.com/cambridgegis/cambridgegis_data/raw/master/Address/Address_Points/ADDRESS_AddressPoints.geojson"
 
         self.url_zones_cambridge = "https://github.com/cambridgegis/cambridgegis_data/raw/master/DPW/Street_Sweeping_Roads/DPW_StreetSweepingRoads.geojson"
@@ -644,8 +644,8 @@ class Boston(DataSource):
 
     def download_misc(self):
         Logger.info("Downloading Boston addresses data")
-        download_arcgis(self.url_addr_boston, "point", "SAM_ADDRESS_ID",
-            "/tmp/boston_address.geojson")
+        download_progress(self.url_addr_boston, 'boston_address.geojson',
+            CONFIG['DOWNLOAD_DIRECTORY'])
 
         Logger.info("Downloading Cambridge addresses data")
         download_progress(self.url_addr_cambridge, 'cambridge_address.geojson',
@@ -681,7 +681,7 @@ class Boston(DataSource):
         subprocess.check_call(
             'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
             'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
-            '-nlt multilinestring -s_srs EPSG:2249 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nlt multilinestring -s_srs EPSG:3857 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
             '-nln boston_geobase {}'.format("/tmp/boston_geobase.geojson", **CONFIG),
             shell=True
         )
@@ -715,7 +715,7 @@ class Boston(DataSource):
         subprocess.check_call(
             'ogr2ogr -f "PostgreSQL" PG:"dbname=prkng user={PG_USERNAME}  '
             'password={PG_PASSWORD} port={PG_PORT} host={PG_HOST}" -overwrite '
-            '-nlt point -s_srs EPSG:2249 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
+            '-nlt point -s_srs EPSG:4326 -t_srs EPSG:3857 -lco GEOMETRY_NAME=geom  '
             '-nln boston_address {}'.format("/tmp/boston_address.geojson", **CONFIG),
             shell=True
         )

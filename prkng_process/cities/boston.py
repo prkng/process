@@ -53,25 +53,27 @@ WITH wholeroads AS (
        OR (r2id IS NULL AND ((SELECT count(x.*) FROM boston_geobase x WHERE ST_DWithin(ST_StartPoint(r.geom), x.geom, 1)) = 1
          OR (SELECT count(x.*) FROM boston_geobase x WHERE ST_DWithin(ST_EndPoint(r.geom), x.geom, 1)) = 1)))
 ), lines AS (
-    SELECT r.id, s.StreetName, s.StreetNa_1, s.RoadSegmen, s.geom
+    SELECT r.id, s.ogc_fid
     FROM linebufs r
     JOIN boston_geobase s ON ST_Contains(r.geom, s.geom)
 ), linesides AS (
-    SELECT DISTINCT ON (r.RoadSegmen, round(a.street_n_1) % 2) r.id, a.geom, r.RoadSegmen, r.geom AS road_geom
-    FROM lines r
+    SELECT DISTINCT ON (r.RoadSegmen, round(a.street_number_sort::int % 2)) l.id, a.geom, r.RoadSegmen,
+        ST_Distance(a.geom, ST_StartPoint(ST_LineMerge(r.geom))) AS distance
+    FROM lines l
+    JOIN boston_geobase r ON l.ogc_fid = r.ogc_fid
     JOIN boston_address a ON ST_DWithin(r.geom, a.geom, 50)
-        AND (upper(a.street_bod || ' ' || a.street_ful) = r.StreetName
-          OR upper(a.street_bod || ' ' || a.street_ful) = r.StreetNa_1)
-    JOIN boston_sweep_sched b ON r.id = b.id
-    WHERE (round(a.street_n_1) % 2 = 0 AND b.side = 'Even') OR (round(a.street_n_1) % 2 = 1 AND b.side = 'Odd')
+        AND (upper(a.street_body || ' ' || a.street_full_suffix) = r.StreetName
+          OR upper(a.street_body || ' ' || a.street_full_suffix) = r.StreetNa_1)
+    JOIN boston_sweep_sched b ON l.id = b.id
+    WHERE (round(a.street_number_sort::int % 2) = 0 AND b.side = 'Even') OR (round(a.street_number_sort::int % 2) = 1 AND b.side = 'Odd')
          OR (b.side IS NULL)
-    ORDER BY r.RoadSegmen, round(a.street_n_1) % 2, ST_Distance(a.geom, ST_LineInterpolatePoint(ST_LineMerge(r.geom), 0.5))
+    ORDER BY r.RoadSegmen, round(a.street_number_sort::int % 2), ST_Distance(a.geom, ST_LineInterpolatePoint(ST_LineMerge(r.geom), 0.5))
 )
 INSERT INTO boston_sign (geom, roadsegment, distance, direction, code, description)
 SELECT
     l.geom,
     l.RoadSegmen,
-    ST_Distance(l.geom, ST_StartPoint(ST_LineMerge(l.road_geom))),
+    l.distance,
     0,
     r.code,
     r.description

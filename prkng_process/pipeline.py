@@ -456,7 +456,6 @@ def process_boston(debug=False):
     db.query(bos.insert_sign_cambridge)
     db.create_index('boston_sign', 'geom', index_type='gist')
     db.create_index('boston_sign', 'direction')
-    db.create_index('boston_sign', 'elevation')
     db.create_index('boston_sign', 'signpost')
     db.vacuum_analyze('public', 'boston_sign')
 
